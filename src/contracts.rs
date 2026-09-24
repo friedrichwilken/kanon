@@ -98,14 +98,14 @@ pub fn check_version(found: u32, known: u32, contract: &str) -> Result<(), Contr
 /// Only the `version` of a document, read before the rest so a newer version is reported as
 /// such rather than as whatever field it changed.
 #[derive(Debug, Deserialize)]
-struct Versioned {
+struct DocumentVersion {
     #[serde(default = "default_version")]
     version: u32,
 }
 
 /// The `version` a JSON document declares, 1 when it has none.
 pub fn document_version(text: &str) -> Result<u32, serde_json::Error> {
-    serde_json::from_str::<Versioned>(text).map(|v| v.version)
+    serde_json::from_str::<DocumentVersion>(text).map(|v| v.version)
 }
 
 /// What `kanon` sends to `POST URL/search`.

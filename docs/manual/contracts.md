@@ -37,7 +37,7 @@ Response ([schema](../schemas/backend-response.schema.json);
 ```json
 {"version": 1, "hits": [
   {"page_id": "guides::docs/enable-caching.md", "score": 12.4,
-   "heading": "Enable caching", "unit_id": "guides::docs/enable-caching.md#1"}
+   "heading": "Enable", "unit_id": "guides::docs/enable-caching.md#1"}
 ]}
 ```
 
@@ -72,12 +72,17 @@ Version 1 ([schema](../schemas/unit.schema.json)):
 
 ```json
 {"version": 1, "id": "guides::docs/enable-caching.md#1",
- "page_id": "guides::docs/enable-caching.md", "heading": "Enable caching", "ordinal": 1,
- "text": "Enable caching\nEnable caching\n\n...", "sha256": "..."}
+ "page_id": "guides::docs/enable-caching.md", "heading": "Enable", "ordinal": 1,
+ "text": "Enable Caching\nEnable\n\n\nSet `cache.enabled = true` and `cache.size` in the configuration.",
+ "sha256": "37b7f00304b910b905de1f8625a032d0160b14817c9d386b1e2f8eb34fc8e774"}
 ```
 
-`text` is the title, heading and body joined as embedded; `sha256` is its hash in lower-case
-hex, so two sides can tell whether they cut the same unit without exchanging the text.
+This is the second unit of the golden fixture's `guides/docs/enable-caching.md` (the page's
+title, its `## Enable` heading and that section's body); `#0` is the intro before the first
+heading, with an empty `heading`. `text` is the title, heading and body joined as embedded;
+`sha256` is its hash in lower-case hex, so two sides can tell whether they cut the same unit
+without exchanging the text. Pages a higher-priority source mirrors are not searchable and
+yield no units.
 
 ## Keeping the schemas honest
 

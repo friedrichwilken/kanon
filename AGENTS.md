@@ -26,6 +26,10 @@ belongs in git: a query set, a run, a gate, a report.
 (`KANON_*` with a `PINAKES_*` fallback) and `num`. `llm` (the model endpoint from
 `KANON_LLM_*`) sits on `env`.
 
+**Contracts:** `contracts` (the versioned serde types of the backend contract, the trail and
+the unit, the readers that check a document's version, and the source of the JSON Schemas
+under `docs/schemas/`); it sits on pinakes alone.
+
 **Measuring:** `eval` (the judge, the metrics, the result file); `embed` (the embeddings file
 pair and the `Embedder` trait); `backend` (the `Backend` trait and `bm25`, `tantivy`, `dense`,
 `hybrid`, `external`); `grade` (replay a trail, ask the model); `queries` (grow and validate

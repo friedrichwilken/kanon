@@ -168,7 +168,7 @@ mod tests {
         // Both results: the rank-movement chart too.
         let outcome = report(&ReportOptions {
             eval_before: Some(result.clone()),
-            eval_after: Some(result),
+            eval_after: Some(result.clone()),
             runs: None,
             svg: Some(charts_dir.clone()),
         })
@@ -183,10 +183,20 @@ mod tests {
             outcome.text
         );
 
+        // Nothing to draw: the directory is not created.
+        let outcome = report(&ReportOptions {
+            svg: Some(dir.path().join("unused")),
+            ..ReportOptions::default()
+        })
+        .unwrap();
+        assert_eq!(outcome.charts, Charts::default());
+        assert!(!dir.path().join("unused").exists());
+
         // A directory that cannot be created is an error naming it.
         std::fs::write(dir.path().join("blocker"), "").unwrap();
         assert!(matches!(
             report(&ReportOptions {
+                eval_after: Some(result),
                 svg: Some(dir.path().join("blocker/charts")),
                 ..ReportOptions::default()
             })

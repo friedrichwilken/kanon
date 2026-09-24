@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
-use crate::eval::{EvalSummary, Metrics, Split};
+use crate::eval::{EvalSummary, Metrics, QueryResult, Split};
 use crate::history::HistoryRow;
 use crate::num::float;
 
@@ -77,8 +77,8 @@ impl Charts {
     }
 }
 
-/// Write every chart whose inputs are given into `dir` (created when missing) and return the
-/// paths. The recall-over-runs chart needs `history`, the rank-movement chart both results,
+/// Write every chart whose inputs are given into `dir` (created when the first chart is
+/// written, so a call with no inputs leaves nothing behind) and return the paths. The recall-over-runs chart needs `history`, the rank-movement chart both results,
 /// the recall-per-kind chart either result (`after` wins).
 pub fn write_charts(
     dir: &Path,
@@ -90,8 +90,8 @@ pub fn write_charts(
         let path = path.to_path_buf();
         move |source| SvgError::Io { path, source }
     };
-    std::fs::create_dir_all(dir).map_err(io(dir))?;
     let write = |name: &str, svg: String| -> Result<PathBuf, SvgError> {
+        std::fs::create_dir_all(dir).map_err(io(dir))?;
         let path = dir.join(name);
         std::fs::write(&path, svg).map_err(io(&path))?;
         Ok(path)
@@ -118,6 +118,7 @@ const BLUE: &str = "#3080dc";
 const ORANGE: &str = "#e2602d";
 const AQUA: &str = "#1aa675";
 const RED: &str = "#d03b3b";
+const VIOLET: &str = "#7a5fd6";
 const FONT: &str = "system-ui, -apple-system, 'Segoe UI', sans-serif";
 const WIDTH: f64 = 640.0;
 
@@ -348,15 +349,18 @@ fn legend_swatch(svg: &mut Svg, x: f64, y: f64, colour: &str, label: &str) -> f6
 /// A chart line: its name, its colour and the metric it plots.
 type Metric = (&'static str, &'static str, fn(&Metrics) -> f64);
 
-/// The three metrics every chart line stands for.
-const METRICS: [Metric; 3] = [
+/// The four metrics every chart line stands for.
+const METRICS: [Metric; 4] = [
     ("recall@5", BLUE, |m| m.recall5),
     ("recall@10", ORANGE, |m| m.recall10),
     ("MRR", AQUA, |m| m.mrr),
+    ("nDCG@5", VIOLET, |m| m.ndcg5),
 ];
 
-/// Recall@5, recall@10 and MRR over the runs of a directory: one line per metric, tuning
-/// solid, held-out dashed, x the run sequence number with the label beneath, y 0..1.
+/// Recall@5, recall@10, MRR and nDCG@5 over the runs of a directory: one line per metric,
+/// tuning solid, held-out dashed, x the run sequence number with the label beneath, y 0..1.
+/// A run written before nDCG existed draws its nDCG@5 at zero, as the history table shows
+/// it.
 pub fn recall_over_runs(rows: &[HistoryRow]) -> String {
     let height = 320.0;
     let plot = Plot {
@@ -371,7 +375,7 @@ pub fn recall_over_runs(rows: &[HistoryRow]) -> String {
         18.0,
         Anchor::Start,
         TEXT,
-        "Recall and MRR over runs",
+        "Recall, MRR and nDCG@5 over runs",
     );
     let mut x = plot.left;
     for (name, colour, _) in METRICS {
@@ -523,23 +527,26 @@ impl Movement {
     }
 }
 
+/// A result's rows that have a rank to move: every query but the negative ones.
+fn ranked_queries(result: &EvalSummary) -> impl Iterator<Item = &QueryResult> {
+    result.queries.iter().filter(|q| !q.is_negative())
+}
+
 /// The rows of the rank-movement chart: every query id in either result, sorted by delta
 /// (biggest win first, ties by id), plus the last rank column and the number of unchanged
-/// rows. When more than 40 rows would be drawn and more than one is unchanged, the unchanged
-/// ones are dropped (`collapsed` is true) for the chart to draw as one summary row.
+/// rows. Negative queries have no expected page and so no rank; they are left out of the
+/// rows and of the column count. When more than 40 rows would be drawn and more than one is
+/// unchanged, the unchanged ones are dropped (`collapsed` is true) for the chart to draw as
+/// one summary row.
 fn movements(before: &EvalSummary, after: &EvalSummary) -> (Vec<Movement>, usize, usize, bool) {
-    let mut ids: Vec<&str> = after.queries.iter().map(|q| q.id.as_str()).collect();
+    let mut ids: Vec<&str> = ranked_queries(after).map(|q| q.id.as_str()).collect();
     ids.extend(
-        before
-            .queries
-            .iter()
+        ranked_queries(before)
             .map(|q| q.id.as_str())
             .filter(|id| after.query(id).is_none()),
     );
-    let last = before
-        .queries
-        .iter()
-        .chain(&after.queries)
+    let last = ranked_queries(before)
+        .chain(ranked_queries(after))
         .map(|q| q.top.len().max(rank_of(q.rr).unwrap_or(0)))
         .max()
         .unwrap_or(0)
@@ -570,7 +577,7 @@ fn movements(before: &EvalSummary, after: &EvalSummary) -> (Vec<Movement>, usize
 }
 
 /// The rank of the first expected hit before and after, one row per query id in either
-/// result: an arrow from the old rank to the new one, misses in a column past the last rank,
+/// result (negative queries left out, having no rank to move): an arrow from the old rank to the new one, misses in a column past the last rank,
 /// the biggest wins on top and the biggest regressions at the bottom, unchanged rows greyed
 /// in the middle. When more than 40 queries would be drawn, the unchanged ones collapse into
 /// one summary row so the chart stays the height of what moved.
@@ -621,7 +628,7 @@ pub fn rank_movement(before: &EvalSummary, after: &EvalSummary) -> String {
     let summary = |svg: &mut Svg, y: f64| {
         let label = format!("{unchanged} unchanged");
         svg.text(plot.left - 8.0, y + 4.0, Anchor::End, TEXT, &label);
-        svg.text(plot.left + 8.0, y + 4.0, Anchor::Start, GRID, "not drawn");
+        svg.text(plot.left + 8.0, y + 4.0, Anchor::Start, TEXT, "not drawn");
     };
     for row in &rows {
         if collapsed && !summary_drawn && row.delta(last) <= 0 {
@@ -773,14 +780,17 @@ mod tests {
     use std::path::Path;
 
     use super::*;
-    use crate::eval::QueryResult;
     use crate::history::{Run, RunInfo};
 
+    /// Metrics with nDCG@5 and nDCG@10 derived from MRR (`mrr - 0.02`, `mrr + 0.02`), as the
+    /// report snapshots have them.
     fn metrics(r5: f64, r10: f64, mrr: f64, n: usize) -> Metrics {
         Metrics {
             recall5: r5,
             recall10: r10,
             mrr,
+            ndcg5: mrr - 0.02,
+            ndcg10: mrr + 0.02,
             n,
         }
     }
@@ -794,7 +804,11 @@ mod tests {
             hit5: rr >= 0.2,
             hit10: rr >= 0.1,
             rr,
+            ndcg5: rr,
+            ndcg10: rr,
+            rels: vec![],
             top: vec![String::new(); 10],
+            top_score: None,
         }
     }
 
@@ -804,10 +818,12 @@ mod tests {
             tuning: Split {
                 overall: metrics(0.8, 0.85, 0.66, 40),
                 per_kind: BTreeMap::from([("howto".to_string(), metrics(0.9, 0.95, 0.8, 10))]),
+                negative: None,
             },
             holdout: Some(Split {
                 overall: metrics(0.7, 0.8, 0.6, 10),
                 per_kind: BTreeMap::new(),
+                negative: None,
             }),
             queries: vec![
                 query("caching", 1.0),
@@ -825,10 +841,12 @@ mod tests {
                     ("concept".to_string(), metrics(0.7, 0.7, 0.5, 5)),
                     ("howto".to_string(), metrics(0.9, 1.0, 0.85, 10)),
                 ]),
+                negative: None,
             },
             holdout: Some(Split {
                 overall: metrics(0.75, 0.8, 0.65, 10),
                 per_kind: BTreeMap::from([("howto".to_string(), metrics(0.7, 0.8, 0.6, 10))]),
+                negative: None,
             }),
             queries: vec![
                 query("caching", 1.0),
@@ -924,8 +942,12 @@ mod tests {
         );
         assert_eq!(
             svg.matches("stroke-dasharray").count(),
-            1 + 3,
-            "legend + 3 held-out lines"
+            1 + 4,
+            "legend + 4 held-out lines"
+        );
+        assert!(
+            svg.contains("<title>002: tuning nDCG@5 0.680</title>"),
+            "{svg}"
         );
         assert!(svg.contains(">a1b2c3d</text>"), "{svg}");
         snapshot(RECALL_OVER_RUNS, &svg);
@@ -948,13 +970,13 @@ mod tests {
             .lines()
             .filter(|l| l.starts_with("<path") && l.contains("stroke-dasharray"))
             .count();
-        assert_eq!(dashed_paths, 3);
+        assert_eq!(dashed_paths, 4);
         let dashed_moves = svg
             .lines()
             .filter(|l| l.starts_with("<path") && l.contains("stroke-dasharray"))
             .map(|l| l.matches('M').count())
             .sum::<usize>();
-        assert_eq!(dashed_moves, 6, "{svg}");
+        assert_eq!(dashed_moves, 8, "{svg}");
     }
 
     #[test]
@@ -1003,6 +1025,23 @@ mod tests {
             },
         );
         assert!(empty.contains(">no per-query rows</text>"), "{empty}");
+    }
+
+    #[test]
+    fn rank_movement_leaves_negative_queries_out() {
+        let (mut before, mut after) = evals();
+        let negative = QueryResult {
+            kind: "negative".to_string(),
+            top: vec![String::new(); 30],
+            ..query("no-answer", 0.0)
+        };
+        before.queries.push(negative.clone());
+        after.queries.push(negative);
+        let svg = rank_movement(&before, &after);
+        assert!(!svg.contains("no-answer"), "{svg}");
+        // Its 30-long result list does not widen the chart either: 10 columns plus miss.
+        assert!(!svg.contains(">15</text>"), "{svg}");
+        assert_eq!(svg, rank_movement(&evals().0, &evals().1));
     }
 
     #[test]
@@ -1073,7 +1112,7 @@ mod tests {
         let (before, after) = evals();
         let charts = write_charts(&out, None, None, None).unwrap();
         assert_eq!(charts, Charts::default());
-        assert!(out.is_dir());
+        assert!(!out.exists(), "nothing to write, nothing created");
 
         let charts = write_charts(&out, Some(&before), None, None).unwrap();
         assert_eq!(charts.recall_per_kind, Some(out.join(RECALL_PER_KIND)));
@@ -1097,7 +1136,7 @@ mod tests {
 
         // A directory that cannot be created names itself.
         std::fs::write(dir.path().join("file"), "").unwrap();
-        let err = write_charts(&dir.path().join("file/x"), None, None, None).unwrap_err();
+        let err = write_charts(&dir.path().join("file/x"), Some(&before), None, None).unwrap_err();
         assert!(err.to_string().contains("file/x"), "{err}");
     }
 }

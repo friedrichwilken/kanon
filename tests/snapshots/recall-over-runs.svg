@@ -1,15 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="640" height="320" viewBox="0 0 640 320" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="12">
-<text x="44" y="18" text-anchor="start" fill="#6b7280">Recall and MRR over runs</text>
+<text x="44" y="18" text-anchor="start" fill="#6b7280">Recall, MRR and nDCG@5 over runs</text>
 <line x1="44" y1="34" x2="62" y2="34" stroke="#3080dc" stroke-width="2"/>
 <text x="68" y="38" text-anchor="start" fill="#6b7280">recall@5</text>
 <line x1="140" y1="34" x2="158" y2="34" stroke="#e2602d" stroke-width="2"/>
 <text x="164" y="38" text-anchor="start" fill="#6b7280">recall@10</text>
 <line x1="243" y1="34" x2="261" y2="34" stroke="#1aa675" stroke-width="2"/>
 <text x="267" y="38" text-anchor="start" fill="#6b7280">MRR</text>
-<line x1="312" y1="34" x2="330" y2="34" stroke="#9ca3af" stroke-width="2"/>
-<text x="336" y="38" text-anchor="start" fill="#6b7280">tuning</text>
-<line x1="394" y1="34" x2="412" y2="34" stroke="#9ca3af" stroke-width="2" stroke-dasharray="5 4"/>
-<text x="418" y="38" text-anchor="start" fill="#6b7280">held-out</text>
+<line x1="304" y1="34" x2="322" y2="34" stroke="#7a5fd6" stroke-width="2"/>
+<text x="328" y="38" text-anchor="start" fill="#6b7280">nDCG@5</text>
+<line x1="394" y1="34" x2="412" y2="34" stroke="#9ca3af" stroke-width="2"/>
+<text x="418" y="38" text-anchor="start" fill="#6b7280">tuning</text>
+<line x1="476" y1="34" x2="494" y2="34" stroke="#9ca3af" stroke-width="2" stroke-dasharray="5 4"/>
+<text x="500" y="38" text-anchor="start" fill="#6b7280">held-out</text>
 <line x1="44" y1="272" x2="624" y2="272" stroke="#9ca3af" stroke-width="0.5"/>
 <text x="38" y="276" text-anchor="end" fill="#6b7280">0.00</text>
 <line x1="44" y1="217" x2="624" y2="217" stroke="#9ca3af" stroke-width="0.5"/>
@@ -34,6 +36,9 @@
 <path d="M189 126.8 L479 118" stroke="#1aa675" fill="none" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
 <circle cx="189" cy="126.8" r="3" fill="#1aa675"><title>001 a1b2c3d: tuning MRR 0.660</title></circle>
 <circle cx="479" cy="118" r="3" fill="#1aa675"><title>002: tuning MRR 0.700</title></circle>
+<path d="M189 131.2 L479 122.4" stroke="#7a5fd6" fill="none" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="189" cy="131.2" r="3" fill="#7a5fd6"><title>001 a1b2c3d: tuning nDCG@5 0.640</title></circle>
+<circle cx="479" cy="122.4" r="3" fill="#7a5fd6"><title>002: tuning nDCG@5 0.680</title></circle>
 <path d="M189 118 L479 107" stroke="#3080dc" fill="none" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="5 4"/>
 <circle cx="189" cy="118" r="3" fill="#3080dc"><title>001 a1b2c3d: held-out recall@5 0.700</title></circle>
 <circle cx="479" cy="107" r="3" fill="#3080dc"><title>002: held-out recall@5 0.750</title></circle>
@@ -43,4 +48,7 @@
 <path d="M189 140 L479 129" stroke="#1aa675" fill="none" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="5 4"/>
 <circle cx="189" cy="140" r="3" fill="#1aa675"><title>001 a1b2c3d: held-out MRR 0.600</title></circle>
 <circle cx="479" cy="129" r="3" fill="#1aa675"><title>002: held-out MRR 0.650</title></circle>
+<path d="M189 144.4 L479 133.4" stroke="#7a5fd6" fill="none" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="5 4"/>
+<circle cx="189" cy="144.4" r="3" fill="#7a5fd6"><title>001 a1b2c3d: held-out nDCG@5 0.580</title></circle>
+<circle cx="479" cy="133.4" r="3" fill="#7a5fd6"><title>002: held-out nDCG@5 0.630</title></circle>
 </svg>

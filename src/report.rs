@@ -27,10 +27,16 @@ pub struct ReportInput<'a> {
     pub charts: Option<&'a Charts>,
 }
 
-/// An image link to a chart file, under the section it belongs to.
+/// An image link to a chart file, under the section it belongs to. A path with whitespace
+/// or parentheses goes in angle brackets, as Markdown needs.
 fn chart_link(out: &mut String, alt: &str, path: Option<&Path>) {
     if let Some(path) = path {
-        let _ = writeln!(out, "![{alt}]({})\n", path.display());
+        let path = path.display().to_string();
+        if path.contains(|c: char| c.is_whitespace() || c == '(' || c == ')') {
+            let _ = writeln!(out, "![{alt}](<{path}>)\n");
+        } else {
+            let _ = writeln!(out, "![{alt}]({path})\n");
+        }
     }
 }
 
@@ -65,7 +71,7 @@ pub fn render(input: ReportInput<'_>) -> String {
         out.push('\n');
         chart_link(
             &mut out,
-            "Recall and MRR over runs",
+            "Recall, MRR and nDCG@5 over runs",
             charts.and_then(|c| c.recall_over_runs.as_deref()),
         );
     }
@@ -335,5 +341,20 @@ mod tests {
         });
         assert!(!text.contains("recall-over-runs"), "{text}");
         assert!(text.contains("](out/rank-movement.svg)"), "{text}");
+
+        // A directory with a space or a parenthesis needs angle brackets.
+        let text = render(ReportInput {
+            before: Some(&before),
+            after: None,
+            history: None,
+            charts: Some(&Charts {
+                recall_per_kind: Some("my (charts)/recall-per-kind.svg".into()),
+                ..Charts::default()
+            }),
+        });
+        assert!(
+            text.contains("](<my (charts)/recall-per-kind.svg>)\n"),
+            "{text}"
+        );
     }
 }

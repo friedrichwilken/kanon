@@ -87,6 +87,13 @@ fn report_svg_writes_the_charts_and_links_them() {
     let dir = workspace();
     let root = dir.path();
 
+    // Without --svg nothing is written and nothing linked.
+    let out = kanon(root, &["report", "--eval-after", "after.json"]);
+    let stderr = ok(&out);
+    assert!(stderr.is_empty(), "{stderr}");
+    assert!(!String::from_utf8_lossy(&out.stdout).contains(".svg"));
+    assert!(!root.join("out").exists());
+
     let out = kanon(
         root,
         &[
@@ -160,12 +167,11 @@ fn report_svg_writes_the_charts_and_links_them() {
     assert!(!report.contains("rank-movement"), "{report}");
     assert!(!report.contains("recall-over-runs"), "{report}");
 
-    // Without --svg nothing is written and nothing linked.
-    let out = kanon(root, &["report", "--eval-after", "after.json"]);
+    // --svg with nothing to draw leaves no directory behind.
+    let out = kanon(root, &["report", "--svg", "unused"]);
     let stderr = ok(&out);
     assert!(stderr.is_empty(), "{stderr}");
-    assert!(!String::from_utf8_lossy(&out.stdout).contains(".svg"));
-    assert!(!root.join("charts").exists());
+    assert!(!root.join("unused").exists());
 
     // A directory that cannot be created is an error naming it.
     fs::write(root.join("blocker"), "").unwrap();

@@ -21,9 +21,14 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test
 ```
 
-`cargo test` runs the unit tests, the integration tests, the golden corpus checks and the
-report snapshots, all offline. `just update-golden` refreshes the pinned results after an
-intended change; say why in the commit body.
+`cargo test` runs the unit tests, the integration tests, the golden corpus checks, the
+report snapshots and the JSON Schema drift check, all offline. `just update-golden` refreshes
+the pinned results after an intended change; say why in the commit body.
+
+The JSON Schemas under `docs/schemas/` are generated from the types in `src/contracts.rs`, so
+after changing a contract type run `UPDATE_SCHEMAS=1 cargo test --test schemas`, commit the
+regenerated files and follow the version rule in
+[`docs/manual/contracts.md`](docs/manual/contracts.md).
 
 ## Pull requests
 

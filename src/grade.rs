@@ -16,7 +16,8 @@ use pinakes::index::{Hit, Index, IndexError};
 use pinakes::jsonl::{self, KeyOrder};
 use pinakes::llm::{self, ChatError, ChatTransport, LlmConfig};
 use pinakes::residue;
-use pinakes::trail::TrailEntry;
+
+use crate::contracts::TrailEntry;
 
 /// Default `--k`.
 pub const DEFAULT_K: usize = 20;
@@ -215,13 +216,8 @@ mod tests {
     fn distinct_queries_preserves_first_occurrence_order() {
         let entries = vec![
             TrailEntry {
-                at: "t".to_string(),
                 query: "b".to_string(),
-                retrieved: vec![],
-                ranks: vec![],
-                cited: vec![],
-                outcome: pinakes::trail::Outcome::Unknown,
-                session: String::new(),
+                ..entries_base()
             },
             TrailEntry {
                 query: "a".to_string(),
@@ -237,12 +233,13 @@ mod tests {
 
     fn entries_base() -> TrailEntry {
         TrailEntry {
+            version: crate::contracts::TRAIL_VERSION,
             at: "t".to_string(),
             query: String::new(),
             retrieved: vec![],
             ranks: vec![],
             cited: vec![],
-            outcome: pinakes::trail::Outcome::Unknown,
+            outcome: crate::contracts::Outcome::Unknown,
             session: String::new(),
         }
     }

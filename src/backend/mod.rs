@@ -14,6 +14,7 @@ use std::str::FromStr;
 
 use thiserror::Error;
 
+use crate::contracts::ContractError;
 use crate::embed::{EmbedError, Embedder};
 use pinakes::corpus::CorpusError;
 use pinakes::index::{Hit, IndexError, Priorities};
@@ -73,6 +74,9 @@ pub enum BackendError {
         /// What was wrong with it.
         message: String,
     },
+    /// The external backend answered with a contract version newer than this kanon reads.
+    #[error(transparent)]
+    Contract(#[from] ContractError),
     /// The requested backend name is not one of the five backends.
     #[error("unknown backend {0:?}: expected bm25, bm25-tantivy, dense, hybrid or external")]
     UnknownBackend(String),

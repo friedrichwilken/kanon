@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "hits": [
+    {
+      "page_id": "guides::docs/enable-caching.md",
+      "score": 12.4,
+      "heading": "Enable caching",
+      "unit_id": "guides::docs/enable-caching.md#1"
+    },
+    {
+      "page_id": "cookbook::docs/recipes/enable-caching.md",
+      "score": 9.8,
+      "heading": "",
+      "unit_id": "cookbook::docs/recipes/enable-caching.md#0"
+    },
+    {
+      "page_id": "handbook::docs/concepts/storage.md",
+      "score": 3.1
+    }
+  ]
+}

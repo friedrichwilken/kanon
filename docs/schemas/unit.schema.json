@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Unit",
+  "description": "One retrieval unit: a section of a page, the thing a hit refers to and `embed` embeds.",
+  "type": "object",
+  "properties": {
+    "heading": {
+      "description": "The unit's heading, empty for the page's intro.",
+      "type": "string"
+    },
+    "id": {
+      "description": "`<page_id>#<ordinal>`.",
+      "type": "string"
+    },
+    "ordinal": {
+      "description": "0-based position of the unit within its page, in document order.",
+      "type": "integer",
+      "format": "uint",
+      "minimum": 0
+    },
+    "page_id": {
+      "description": "`<source>::<path>` of the page the unit belongs to.",
+      "type": "string"
+    },
+    "sha256": {
+      "description": "SHA-256 of `text`, lower-case hex.",
+      "type": "string"
+    },
+    "text": {
+      "description": "Title, heading and body joined into one text worth embedding.",
+      "type": "string"
+    },
+    "version": {
+      "description": "Unit version; missing means 1.",
+      "type": "integer",
+      "format": "uint32",
+      "default": 1,
+      "minimum": 0
+    }
+  },
+  "required": [
+    "id",
+    "page_id",
+    "heading",
+    "ordinal",
+    "text",
+    "sha256"
+  ]
+}

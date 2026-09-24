@@ -32,7 +32,10 @@ sources  ──►  pinakes   ──►  artifact + manifest  ──►  serapeu
 - serapeum serves it. It implements the backend contract, so `kanon` can score what is actually
   running.
 
-Each one reads and writes plain files. None needs the others at runtime.
+Each one reads and writes plain files. None needs the others at runtime. The shapes that cross
+these lines (the backend request and response, a trail line, a retrieval unit) are versioned
+and documented in [docs/manual/contracts.md](docs/manual/contracts.md), with a JSON Schema per
+contract under [docs/schemas/](docs/schemas/).
 
 ## Status
 

@@ -1,12 +1,12 @@
 use std::path::PathBuf;
 
+use crate::contracts;
 use crate::error::{CommandError, io_err};
 use crate::grade::{self, GradedRow};
 use crate::workspace::Paths;
 use pinakes::index::Index;
 use pinakes::llm::ChatTransport;
 use pinakes::manifest::now_rfc3339;
-use pinakes::trail;
 
 use super::settings;
 
@@ -44,7 +44,7 @@ pub fn grade(
     let backend = options.backend.as_deref().unwrap_or(grade::BM25_BACKEND);
     grade::check_backend(backend)?;
     let config = crate::llm::config_from_env(options.model.clone())?;
-    let entries = trail::read_jsonl(&options.trail)?;
+    let entries = contracts::read_trail(&options.trail)?;
     let queries = grade::distinct_queries(&entries);
     let priorities = settings(paths)?.priorities;
     let index = Index::build(&paths.artifact, &priorities)?;

@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SearchResponse",
+  "description": "What a backend answers.",
+  "type": "object",
+  "properties": {
+    "hits": {
+      "description": "The hits, best first.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SearchHit"
+      }
+    },
+    "version": {
+      "description": "Backend contract version; missing means 1.",
+      "type": "integer",
+      "format": "uint32",
+      "default": 1,
+      "minimum": 0
+    }
+  },
+  "required": [
+    "hits"
+  ],
+  "$defs": {
+    "SearchHit": {
+      "description": "One hit of a search response.",
+      "type": "object",
+      "properties": {
+        "heading": {
+          "description": "Heading of the section that matched, empty for the page's intro.",
+          "type": "string",
+          "default": ""
+        },
+        "page_id": {
+          "description": "`<source>::<path>` of the page.",
+          "type": "string"
+        },
+        "score": {
+          "description": "The backend's score; only the order matters to `kanon`.",
+          "type": "number",
+          "format": "double"
+        },
+        "unit_id": {
+          "description": "The unit that matched (`<page_id>#<ordinal>`), when the backend retrieves units.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "page_id",
+        "score"
+      ]
+    }
+  }
+}

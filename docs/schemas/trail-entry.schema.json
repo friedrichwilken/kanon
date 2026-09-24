@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TrailEntry",
+  "description": "One served query, as a consumer recorded it: one line of `trail.jsonl`. Every field but `at` and `query` is optional, since consumers vary in how much they log.",
+  "type": "object",
+  "properties": {
+    "at": {
+      "description": "RFC 3339 UTC time the query was served.",
+      "type": "string"
+    },
+    "cited": {
+      "description": "Page ids (`<source>::<path>`) the consumer says were actually cited or used.",
+      "type": "array",
+      "default": [],
+      "items": {
+        "type": "string"
+      }
+    },
+    "outcome": {
+      "description": "How the response fared, when the consumer recorded it.",
+      "$ref": "#/$defs/Outcome",
+      "default": "unknown"
+    },
+    "query": {
+      "description": "The query text.",
+      "type": "string"
+    },
+    "ranks": {
+      "description": "Rank shown to the user for each entry of `retrieved` (same length, when given).",
+      "type": "array",
+      "default": [],
+      "items": {
+        "type": "integer",
+        "format": "uint32",
+        "minimum": 0
+      }
+    },
+    "retrieved": {
+      "description": "Page ids (`<source>::<path>`) returned, in retrieval order.",
+      "type": "array",
+      "default": [],
+      "items": {
+        "type": "string"
+      }
+    },
+    "session": {
+      "description": "An opaque session identifier, when the consumer gave one.",
+      "type": "string",
+      "default": ""
+    },
+    "version": {
+      "description": "Trail version; missing means 1.",
+      "type": "integer",
+      "format": "uint32",
+      "default": 1,
+      "minimum": 0
+    }
+  },
+  "required": [
+    "at",
+    "query"
+  ],
+  "$defs": {
+    "Outcome": {
+      "description": "What the consumer recorded happened with the response, when it recorded anything.",
+      "oneOf": [
+        {
+          "description": "The response was judged good.",
+          "type": "string",
+          "const": "ok"
+        },
+        {
+          "description": "The response was judged bad.",
+          "type": "string",
+          "const": "bad"
+        },
+        {
+          "description": "Not recorded, or recorded as unknown.",
+          "type": "string",
+          "const": "unknown"
+        }
+      ]
+    }
+  }
+}

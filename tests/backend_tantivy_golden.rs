@@ -7,7 +7,7 @@
 
 use std::path::{Path, PathBuf};
 
-use kanon::backend::BackendKind;
+use kanon::backend::{BackendKind, BackendSpec};
 use kanon::commands::{BackendEvalOptions, Paths, eval_backend};
 use serde_json::{Value, json};
 
@@ -19,7 +19,7 @@ fn fixture() -> PathBuf {
 fn tantivy_backend_metrics_on_the_golden_corpus_are_pinned() {
     let paths = Paths::for_config(&fixture().join("pinakes.yaml"));
     let options = BackendEvalOptions {
-        backend: BackendKind::Bm25Tantivy,
+        backend: BackendSpec::builtin(BackendKind::Bm25Tantivy),
         ..BackendEvalOptions::default()
     };
     let outcome = eval_backend(&paths, &options).expect("eval --backend bm25-tantivy runs");

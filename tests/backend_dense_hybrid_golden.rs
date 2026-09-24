@@ -9,7 +9,7 @@
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use kanon::backend::BackendKind;
+use kanon::backend::{BackendKind, BackendSpec};
 use kanon::commands::{BackendEvalOptions, EmbedOptions, Paths, embed, eval_backend};
 use kanon::embed::Embedder;
 use kanon::embed::testing::FakeEmbedder;
@@ -51,15 +51,18 @@ fn dense_and_hybrid_metrics_on_the_golden_corpus_are_pinned() {
 
     let embedder_rc: Rc<dyn Embedder> = Rc::new(FakeEmbedder);
     let common = BackendEvalOptions {
-        embeddings: Some(embeddings_dir.path().join("embeddings.bin")),
         embedder: Some(embedder_rc),
         ..BackendEvalOptions::default()
+    };
+    let spec = |kind: BackendKind| BackendSpec {
+        embeddings: Some(embeddings_dir.path().join("embeddings.bin")),
+        ..BackendSpec::builtin(kind)
     };
 
     let dense = eval_backend(
         &paths,
         &BackendEvalOptions {
-            backend: BackendKind::Dense,
+            backend: spec(BackendKind::Dense),
             ..common.clone()
         },
     )
@@ -80,7 +83,7 @@ fn dense_and_hybrid_metrics_on_the_golden_corpus_are_pinned() {
     let hybrid = eval_backend(
         &paths,
         &BackendEvalOptions {
-            backend: BackendKind::Hybrid,
+            backend: spec(BackendKind::Hybrid),
             ..common
         },
     )

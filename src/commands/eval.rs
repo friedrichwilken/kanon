@@ -1,8 +1,11 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use crate::backend::{self, Backend, BackendConfig, BackendError, BackendKind};
-use crate::config::{Config, DEFAULT_K, DEFAULT_MAX_RECALL_DROP, GateMetric};
+use crate::backend::{self, Backend, BackendConfig, BackendError, BackendKind, BackendSpec};
+use crate::config::{
+    Config, DEFAULT_K, DEFAULT_MAX_RECALL_DROP, GateMetric, NamedBackend, UnknownBackend,
+};
 use crate::embed::{EmbedError, Embedder, HttpEmbedder};
 use crate::error::CommandError;
 use crate::eval::{self, Delta, EvalSummary, Gate};
@@ -283,12 +286,9 @@ pub struct BackendEvalOptions {
     /// A negative query counts as rejected when its top score stays under this (default:
     /// `negative_threshold` from the config, else only an empty result list rejects).
     pub negative_threshold: Option<f64>,
-    /// The backend to measure.
-    pub backend: BackendKind,
-    /// The consumer's search endpoint (`external`).
-    pub backend_url: Option<String>,
-    /// `embeddings.bin` path (`dense`, `hybrid`); default: `paths.embeddings`.
-    pub embeddings: Option<PathBuf>,
+    /// The backend to measure: its name, kind, and the URL or embeddings file that came with
+    /// the name (`embeddings` defaults to `paths.embeddings`).
+    pub backend: BackendSpec,
     /// Use embeddings even when their recorded manifest hash does not match the artifact.
     pub allow_stale: bool,
     /// Where query embeddings come from (`dense`, `hybrid`).
@@ -334,18 +334,20 @@ fn evaluate_backend(
     Ok(eval::summarise(rows, negative_threshold))
 }
 
-/// The [`BackendConfig`] for a command's backend flags, shared by `eval --backend` and
-/// `grade`: `embeddings` defaults to the workspace's `embeddings.bin`, and `embeddings.json`
+/// The [`BackendConfig`] for a command's backend, shared by `eval --backend` and `grade`:
+/// the spec's `embeddings` defaults to the workspace's `embeddings.bin`, and `embeddings.json`
 /// sits next to whichever file is used.
 pub(super) fn backend_config(
     paths: &Paths,
     priorities: Priorities,
-    backend_url: Option<&str>,
-    embeddings: Option<&Path>,
+    spec: &BackendSpec,
     allow_stale: bool,
     embedder: Option<Rc<dyn Embedder>>,
 ) -> BackendConfig {
-    let embeddings_bin = embeddings.map_or_else(|| paths.embeddings.clone(), Path::to_path_buf);
+    let embeddings_bin = spec
+        .embeddings
+        .clone()
+        .unwrap_or_else(|| paths.embeddings.clone());
     let embeddings_json = embeddings_bin.with_extension("json");
     BackendConfig {
         priorities,
@@ -353,14 +355,14 @@ pub(super) fn backend_config(
         embeddings_json,
         allow_stale,
         embedder,
-        backend_url: backend_url.map(str::to_string),
+        backend_url: spec.url.clone(),
     }
 }
 
 /// Run `eval --backend NAME`: like [`eval()`], but through the [`Backend`] trait,
-/// recording the backend name in the result. `--with`/`--without` only work for `bm25`, which
-/// indexes a page list directly; every other backend rejects them with
-/// [`BackendError::UnsupportedAdjustment`].
+/// recording the backend's name (a configured name, or the kind's) in the result.
+/// `--with`/`--without` only work for `bm25`, which indexes a page list directly; every other
+/// backend rejects them with [`BackendError::UnsupportedAdjustment`].
 pub fn eval_backend(
     paths: &Paths,
     options: &BackendEvalOptions,
@@ -376,8 +378,8 @@ pub fn eval_backend(
     let priorities = settings.priorities;
     let queries = eval::load_queries(&queries_path)?;
     let adjusting = !options.with.is_empty() || !options.without.is_empty();
-    if adjusting && options.backend != BackendKind::Bm25 {
-        return Err(BackendError::UnsupportedAdjustment(options.backend.name().to_string()).into());
+    if adjusting && options.backend.kind != BackendKind::Bm25 {
+        return Err(BackendError::UnsupportedAdjustment(options.backend.name.clone()).into());
     }
 
     let (summary, page_count, searchable_count, delta) = if adjusting {
@@ -393,7 +395,7 @@ pub fn eval_backend(
             &options.without,
         )?;
         (
-            summary.with_backend(options.backend.name()),
+            summary.with_backend(&options.backend.name),
             page_count,
             searchable_count,
             Some(delta),
@@ -402,14 +404,13 @@ pub fn eval_backend(
         let config = backend_config(
             paths,
             priorities,
-            options.backend_url.as_deref(),
-            options.embeddings.as_deref(),
+            &options.backend,
             options.allow_stale,
             options.embedder.clone(),
         );
-        let built = backend::build(options.backend, &paths.artifact, &config)?;
+        let built = backend::build(options.backend.kind, &paths.artifact, &config)?;
         let summary = evaluate_backend(built.as_ref(), &queries, k, rules.negative_threshold)?
-            .with_backend(options.backend.name());
+            .with_backend(&options.backend.name);
         (summary, built.page_count(), built.searchable_count(), None)
     };
 
@@ -439,13 +440,14 @@ pub fn eval_backend(
     })
 }
 
-/// Run `eval --compare a,b,c`: [`eval_backend`] once per backend, over the same query set.
-/// With `out`, each backend gets its own run file, labelled `<label>-<backend>`.
+/// Run `eval --compare a,b,c`: [`eval_backend`] once per backend, over the same query set;
+/// `common.backend` is ignored. With `out`, each backend gets its own run file, labelled
+/// `<label>-<backend name>`.
 pub fn eval_compare(
     paths: &Paths,
-    backends: &[BackendKind],
+    backends: &[BackendSpec],
     common: &BackendEvalOptions,
-) -> Result<Vec<(BackendKind, BackendEvalOutcome)>, CommandError> {
+) -> Result<Vec<(BackendSpec, BackendEvalOutcome)>, CommandError> {
     if backends.is_empty() {
         return Err(CommandError::EmptyCompare);
     }
@@ -455,14 +457,14 @@ pub fn eval_compare(
         .then(|| history::run_label(common.label.as_deref(), &paths.config_dir()));
     backends
         .iter()
-        .map(|&kind| {
+        .map(|spec| {
             let options = BackendEvalOptions {
-                backend: kind,
+                backend: spec.clone(),
                 json: None,
-                label: label.as_ref().map(|label| format!("{label}-{kind}")),
+                label: label.as_ref().map(|label| format!("{label}-{spec}")),
                 ..common.clone()
             };
-            Ok((kind, eval_backend(paths, &options)?))
+            Ok((spec.clone(), eval_backend(paths, &options)?))
         })
         .collect()
 }
@@ -473,7 +475,7 @@ pub fn eval_compare(
 
 /// The backend-selecting flags `eval` and `grade` share (`--backend`, `--backend-url`,
 /// `--embeddings`, `--allow-stale`), as given on the command line and before the config's
-/// defaults are applied.
+/// defaults are applied, plus the config's named backends once they are.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BackendFlags {
     /// `--backend`.
@@ -484,26 +486,57 @@ pub struct BackendFlags {
     pub embeddings: Option<PathBuf>,
     /// `--allow-stale`.
     pub allow_stale: bool,
+    /// The config's `backends:`, with each `embeddings` made relative to the config file;
+    /// [`apply_backend_config_defaults`] fills it, and `--backend`/`--compare` may name any
+    /// entry.
+    pub backends: BTreeMap<String, NamedBackend>,
 }
 
 impl BackendFlags {
-    /// The named backend, `bm25` when none was named; an unknown name is
-    /// [`BackendError::UnknownBackend`].
-    pub fn kind(&self) -> Result<BackendKind, BackendError> {
+    /// The backend `--backend` selects, `bm25` when none was named; see [`BackendFlags::resolve`].
+    pub fn spec(&self) -> Result<BackendSpec, BackendError> {
         self.backend
             .as_deref()
-            .map_or(Ok(BackendKind::default()), str::parse)
+            .map_or_else(|| Ok(BackendSpec::default()), |name| self.resolve(name))
     }
 
-    /// Whether none of the flags was given.
+    /// One backend by name, as `--backend NAME` or one entry of `--compare` selects it. A
+    /// built-in kind takes the command's `--backend-url` and `--embeddings` (or the config's);
+    /// a configured name brings its own `url`, and its own `embeddings` when it has one, else
+    /// `--embeddings`. Any other name is [`BackendError::UnknownBackend`].
+    pub fn resolve(&self, name: &str) -> Result<BackendSpec, BackendError> {
+        if let Ok(kind) = name.parse::<BackendKind>() {
+            return Ok(BackendSpec {
+                url: self.backend_url.clone(),
+                embeddings: self.embeddings.clone(),
+                ..BackendSpec::builtin(kind)
+            });
+        }
+        let named = self
+            .backends
+            .get(name)
+            .ok_or_else(|| UnknownBackend(name.to_string()))?;
+        Ok(BackendSpec {
+            name: name.to_string(),
+            kind: named.kind,
+            url: named.url.clone(),
+            embeddings: named.embeddings.clone().or_else(|| self.embeddings.clone()),
+        })
+    }
+
+    /// Whether none of the flags was given (the config's named backends do not count).
     pub(crate) fn is_empty(&self) -> bool {
-        *self == BackendFlags::default()
+        self.backend.is_none()
+            && self.backend_url.is_none()
+            && self.embeddings.is_none()
+            && !self.allow_stale
     }
 }
 
 /// Fill the config's `backend`, `backend_url` and `embeddings` (relative to the config file)
-/// into whichever flags were left unset. A flag always wins. `eval` and `grade` both go
-/// through here, so the two commands read the config the same way.
+/// into whichever flags were left unset, and its `backends` for [`BackendFlags::resolve`]. A
+/// flag always wins. `eval` and `grade` both go through here, so the two commands read the
+/// config the same way.
 pub fn apply_backend_config_defaults(
     paths: &Paths,
     flags: &mut BackendFlags,
@@ -523,6 +556,14 @@ fn load_config(paths: &Paths) -> Result<Option<Config>, CommandError> {
 }
 
 fn fill_backend_defaults(paths: &Paths, config: Config, flags: &mut BackendFlags) {
+    let dir = paths.config.parent().unwrap_or(Path::new("."));
+    let relative_to_config = |path: PathBuf| {
+        if path.is_absolute() {
+            path
+        } else {
+            dir.join(path)
+        }
+    };
     if flags.backend.is_none() {
         flags.backend = config.backend;
     }
@@ -530,15 +571,16 @@ fn fill_backend_defaults(paths: &Paths, config: Config, flags: &mut BackendFlags
         flags.backend_url = config.backend_url;
     }
     if flags.embeddings.is_none() {
-        let dir = paths.config.parent().unwrap_or(Path::new("."));
-        flags.embeddings = config.embeddings.map(|path| {
-            if path.is_absolute() {
-                path
-            } else {
-                dir.join(path)
-            }
-        });
+        flags.embeddings = config.embeddings.map(relative_to_config);
     }
+    flags.backends = config
+        .backends
+        .into_iter()
+        .map(|(name, mut backend)| {
+            backend.embeddings = backend.embeddings.map(relative_to_config);
+            (name, backend)
+        })
+        .collect();
 }
 
 /// Eval flags as given on the command line, before the config's defaults are applied
@@ -598,7 +640,7 @@ pub enum EvalPlan {
     /// combined result's destination (each individual backend call always gets `json: None`).
     Compare {
         /// The backends to compare.
-        backends: Vec<BackendKind>,
+        backends: Vec<BackendSpec>,
         /// Options common to every backend in the comparison.
         common: BackendEvalOptions,
         /// Where to write the combined JSON, if anywhere.
@@ -612,9 +654,7 @@ impl EvalPlan {
         match self {
             EvalPlan::Plain(_) => false,
             EvalPlan::Backend(options) => options.backend.needs_embedder(),
-            EvalPlan::Compare { backends, .. } => {
-                backends.iter().copied().any(BackendKind::needs_embedder)
-            }
+            EvalPlan::Compare { backends, .. } => backends.iter().any(BackendSpec::needs_embedder),
         }
     }
 
@@ -632,13 +672,13 @@ impl EvalPlan {
 
 /// `run_eval`'s dispatch, minus execution: `--compare` wins; else any backend-only flag
 /// (`--backend`/`--backend-url`/`--embeddings`/`--allow-stale`) selects that one backend; else
-/// the legacy plain path. Parses backend names, so this can fail.
+/// the legacy plain path. Resolves backend names ([`BackendFlags::resolve`]), so this can fail.
 pub fn eval_plan(flags: EvalFlags) -> Result<EvalPlan, CommandError> {
     if !flags.compare.is_empty() {
-        let backends: Vec<BackendKind> = flags
+        let backends: Vec<BackendSpec> = flags
             .compare
             .iter()
-            .map(|name| name.trim().parse())
+            .map(|name| flags.backend.resolve(name.trim()))
             .collect::<Result<_, _>>()?;
         let common = BackendEvalOptions {
             queries: flags.queries,
@@ -649,9 +689,7 @@ pub fn eval_plan(flags: EvalFlags) -> Result<EvalPlan, CommandError> {
             with: flags.with,
             without: flags.without,
             negative_threshold: flags.negative_threshold,
-            backend: BackendKind::default(),
-            backend_url: flags.backend.backend_url,
-            embeddings: flags.backend.embeddings,
+            backend: BackendSpec::default(),
             allow_stale: flags.backend.allow_stale,
             embedder: None,
             out: flags.out,
@@ -677,7 +715,7 @@ pub fn eval_plan(flags: EvalFlags) -> Result<EvalPlan, CommandError> {
             label: flags.label,
         }));
     }
-    let backend = flags.backend.kind()?;
+    let backend = flags.backend.spec()?;
     Ok(EvalPlan::Backend(BackendEvalOptions {
         queries: flags.queries,
         k: flags.k,
@@ -688,8 +726,6 @@ pub fn eval_plan(flags: EvalFlags) -> Result<EvalPlan, CommandError> {
         without: flags.without,
         negative_threshold: flags.negative_threshold,
         backend,
-        backend_url: flags.backend.backend_url,
-        embeddings: flags.backend.embeddings,
         allow_stale: flags.backend.allow_stale,
         embedder: None,
         out: flags.out,
@@ -833,7 +869,7 @@ mod tests {
             &paths,
             &BackendEvalOptions {
                 queries: Some(queries),
-                backend: BackendKind::Bm25,
+                backend: BackendSpec::builtin(BackendKind::Bm25),
                 ..BackendEvalOptions::default()
             },
         )
@@ -850,7 +886,7 @@ mod tests {
         let (dir, paths) = eval_workspace();
         let options = BackendEvalOptions {
             queries: Some(dir.path().join("queries.jsonl")),
-            backend: BackendKind::Bm25Tantivy,
+            backend: BackendSpec::builtin(BackendKind::Bm25Tantivy),
             with: vec!["handbook::docs/user/quotas.md".to_string()],
             ..BackendEvalOptions::default()
         };
@@ -869,14 +905,17 @@ mod tests {
         };
         let results = eval_compare(
             &paths,
-            &[BackendKind::Bm25, BackendKind::Bm25Tantivy],
+            &[
+                BackendSpec::builtin(BackendKind::Bm25),
+                BackendSpec::builtin(BackendKind::Bm25Tantivy),
+            ],
             &common,
         )
         .unwrap();
         assert_eq!(results.len(), 2);
-        assert_eq!(results[0].0, BackendKind::Bm25);
+        assert_eq!(results[0].0.kind, BackendKind::Bm25);
         assert_eq!(results[0].1.summary.backend, "bm25");
-        assert_eq!(results[1].0, BackendKind::Bm25Tantivy);
+        assert_eq!(results[1].0.kind, BackendKind::Bm25Tantivy);
         assert_eq!(results[1].1.summary.backend, "bm25-tantivy");
         assert!(matches!(
             eval_compare(&paths, &[], &common).unwrap_err(),
@@ -895,12 +934,39 @@ mod tests {
         embed(&paths, &embed_options, fake_embedder().as_ref()).unwrap();
         let options = BackendEvalOptions {
             queries: Some(dir.path().join("queries.jsonl")),
-            backend: BackendKind::Dense,
+            backend: BackendSpec::builtin(BackendKind::Dense),
             embedder: Some(fake_embedder()),
             ..BackendEvalOptions::default()
         };
         let outcome = eval_backend(&paths, &options).unwrap();
         assert_eq!(outcome.summary.backend, "dense");
+        assert_eq!(outcome.page_count, 1);
+    }
+
+    #[test]
+    fn eval_backend_records_a_configured_name_and_uses_its_embeddings() {
+        let (dir, paths) = eval_workspace();
+        let embed_options = EmbedOptions {
+            model: "fake".to_string(),
+            batch: 64,
+            out: Some(dir.path().join("v2/embeddings.bin")),
+        };
+        fs::create_dir_all(dir.path().join("v2")).unwrap();
+        embed(&paths, &embed_options, fake_embedder().as_ref()).unwrap();
+        assert!(!paths.embeddings.exists(), "only the named file exists");
+        let options = BackendEvalOptions {
+            queries: Some(dir.path().join("queries.jsonl")),
+            backend: BackendSpec {
+                name: "vectors-v2".to_string(),
+                kind: BackendKind::Dense,
+                url: None,
+                embeddings: Some(dir.path().join("v2/embeddings.bin")),
+            },
+            embedder: Some(fake_embedder()),
+            ..BackendEvalOptions::default()
+        };
+        let outcome = eval_backend(&paths, &options).unwrap();
+        assert_eq!(outcome.summary.backend, "vectors-v2");
         assert_eq!(outcome.page_count, 1);
     }
 
@@ -936,13 +1002,95 @@ mod tests {
     // -----------------------------------------------------------------------------------------
 
     #[test]
-    fn backend_flags_kind_defaults_to_bm25_and_rejects_an_unknown_name() {
-        assert_eq!(BackendFlags::default().kind().unwrap(), BackendKind::Bm25);
-        assert_eq!(named("hybrid").kind().unwrap(), BackendKind::Hybrid);
+    fn backend_flags_spec_defaults_to_bm25_and_rejects_an_unknown_name() {
+        assert_eq!(
+            BackendFlags::default().spec().unwrap(),
+            BackendSpec::default()
+        );
+        assert_eq!(named("hybrid").spec().unwrap().kind, BackendKind::Hybrid);
         assert!(matches!(
-            named("nope").kind().unwrap_err(),
-            BackendError::UnknownBackend(name) if name == "nope"
+            named("nope").spec().unwrap_err(),
+            BackendError::UnknownBackend(UnknownBackend(name)) if name == "nope"
         ));
+    }
+
+    /// The config's `backends:` as the flags carry them after the defaults are applied.
+    fn configured() -> BackendFlags {
+        let entry = |kind: BackendKind, url: Option<&str>, embeddings: Option<&str>| NamedBackend {
+            kind,
+            url: url.map(str::to_string),
+            embeddings: embeddings.map(PathBuf::from),
+        };
+        BackendFlags {
+            backend_url: Some("https://flag.test".to_string()),
+            embeddings: Some(PathBuf::from("/flag/embeddings.bin")),
+            backends: [
+                (
+                    "old",
+                    entry(BackendKind::External, Some("https://old.test"), None),
+                ),
+                (
+                    "v2",
+                    entry(BackendKind::Dense, None, Some("/cfg/v2/embeddings.bin")),
+                ),
+                ("fused", entry(BackendKind::Hybrid, None, None)),
+            ]
+            .into_iter()
+            .map(|(name, backend)| (name.to_string(), backend))
+            .collect(),
+            ..BackendFlags::default()
+        }
+    }
+
+    #[test]
+    fn resolve_gives_a_built_in_kind_the_flags_and_a_configured_name_its_own_settings() {
+        let flags = configured();
+        assert_eq!(
+            flags.resolve("external").unwrap(),
+            BackendSpec {
+                name: "external".to_string(),
+                kind: BackendKind::External,
+                url: Some("https://flag.test".to_string()),
+                embeddings: Some(PathBuf::from("/flag/embeddings.bin")),
+            }
+        );
+        assert_eq!(
+            flags.resolve("old").unwrap(),
+            BackendSpec {
+                name: "old".to_string(),
+                kind: BackendKind::External,
+                url: Some("https://old.test".to_string()),
+                embeddings: Some(PathBuf::from("/flag/embeddings.bin")),
+            },
+            "--backend-url applies to the built-in external only"
+        );
+        let v2 = flags.resolve("v2").unwrap();
+        assert_eq!((v2.name.as_str(), v2.kind), ("v2", BackendKind::Dense));
+        assert_eq!(
+            v2.embeddings.as_deref(),
+            Some(Path::new("/cfg/v2/embeddings.bin")),
+            "the name's own embeddings win"
+        );
+        let fused = flags.resolve("fused").unwrap();
+        assert_eq!(fused.kind, BackendKind::Hybrid);
+        assert_eq!(
+            fused.embeddings.as_deref(),
+            Some(Path::new("/flag/embeddings.bin")),
+            "a name without embeddings falls back to --embeddings"
+        );
+        assert!(matches!(
+            flags.resolve("nope").unwrap_err(),
+            BackendError::UnknownBackend(UnknownBackend(name)) if name == "nope"
+        ));
+        assert!(!flags.is_empty());
+        assert!(
+            BackendFlags {
+                backends: flags.backends.clone(),
+                ..BackendFlags::default()
+            }
+            .is_empty(),
+            "named backends alone do not select the backend path"
+        );
     }
 
     #[test]
@@ -967,8 +1115,43 @@ mod tests {
                 backend_url: Some("https://example.test".to_string()),
                 embeddings: Some(dir.path().join("custom/embeddings.bin")),
                 allow_stale: false,
+                backends: BTreeMap::new(),
             },
             "the flag wins, the config fills the rest"
+        );
+    }
+
+    #[test]
+    fn apply_backend_config_defaults_carries_named_backends_with_paths_relative_to_the_config() {
+        let (dir, paths) = eval_workspace();
+        fs::write(
+            &paths.config,
+            "queries: queries.jsonl\nbackend: old\nbackends:\n  old:\n    type: external\n    \
+             url: https://old.test\n  v2:\n    type: dense\n    embeddings: v2/embeddings.bin\n",
+        )
+        .unwrap();
+        let mut flags = BackendFlags::default();
+        apply_backend_config_defaults(&paths, &mut flags).unwrap();
+        assert_eq!(flags.backend.as_deref(), Some("old"));
+        assert_eq!(flags.backends.len(), 2);
+        assert_eq!(
+            flags.backends["v2"].embeddings.as_deref(),
+            Some(dir.path().join("v2/embeddings.bin").as_path())
+        );
+        let spec = flags.spec().unwrap();
+        assert_eq!(spec.name, "old");
+        assert_eq!(spec.kind, BackendKind::External);
+        assert_eq!(spec.url.as_deref(), Some("https://old.test"));
+        // A config with a bad entry is refused before anything runs.
+        fs::write(
+            &paths.config,
+            "queries: queries.jsonl\nbackends:\n  old:\n    type: external\n",
+        )
+        .unwrap();
+        let err = apply_backend_config_defaults(&paths, &mut BackendFlags::default()).unwrap_err();
+        assert!(
+            err.to_string().contains("type external needs a url"),
+            "{err}"
         );
     }
 
@@ -1003,6 +1186,7 @@ mod tests {
                 backend_url: Some("https://example.test".to_string()),
                 embeddings: Some(dir.path().join("custom/embeddings.bin")),
                 allow_stale: false,
+                backends: BTreeMap::new(),
             }
         );
     }
@@ -1070,8 +1254,55 @@ mod tests {
             ..EvalFlags::default()
         };
         match eval_plan(flags).unwrap() {
-            EvalPlan::Backend(options) => assert_eq!(options.backend, BackendKind::Bm25Tantivy),
+            EvalPlan::Backend(options) => {
+                assert_eq!(options.backend.kind, BackendKind::Bm25Tantivy);
+            }
             _ => panic!("expected Backend, got a different plan"),
+        }
+    }
+
+    #[test]
+    fn eval_plan_resolves_configured_names_in_backend_and_compare() {
+        let flags = EvalFlags {
+            backend: BackendFlags {
+                backend: Some("old".to_string()),
+                ..configured()
+            },
+            ..EvalFlags::default()
+        };
+        match eval_plan(flags).unwrap() {
+            EvalPlan::Backend(options) => {
+                assert_eq!(options.backend.name, "old");
+                assert_eq!(options.backend.kind, BackendKind::External);
+                assert_eq!(options.backend.url.as_deref(), Some("https://old.test"));
+            }
+            _ => panic!("expected Backend"),
+        }
+        let flags = EvalFlags {
+            compare: vec!["old".to_string(), " external".to_string(), "v2".to_string()],
+            backend: configured(),
+            ..EvalFlags::default()
+        };
+        match eval_plan(flags).unwrap() {
+            EvalPlan::Compare { backends, .. } => {
+                let names: Vec<&str> = backends.iter().map(|b| b.name.as_str()).collect();
+                assert_eq!(names, ["old", "external", "v2"]);
+                assert_eq!(backends[0].url.as_deref(), Some("https://old.test"));
+                assert_eq!(backends[1].url.as_deref(), Some("https://flag.test"));
+                assert!(backends.iter().any(BackendSpec::needs_embedder));
+            }
+            _ => panic!("expected Compare"),
+        }
+        let flags = EvalFlags {
+            compare: vec!["old".to_string(), "nope".to_string()],
+            backend: configured(),
+            ..EvalFlags::default()
+        };
+        match eval_plan(flags) {
+            Err(CommandError::Backend(BackendError::UnknownBackend(UnknownBackend(name)))) => {
+                assert_eq!(name, "nope");
+            }
+            _ => panic!("expected an unknown-backend error"),
         }
     }
 
@@ -1086,7 +1317,7 @@ mod tests {
         };
         match eval_plan(flags).unwrap() {
             EvalPlan::Backend(options) => {
-                assert_eq!(options.backend, BackendKind::Bm25);
+                assert_eq!(options.backend, BackendSpec::default());
                 assert!(options.allow_stale);
             }
             _ => panic!("--allow-stale alone must still route through eval_backend"),
@@ -1102,7 +1333,13 @@ mod tests {
         };
         match eval_plan(flags).unwrap() {
             EvalPlan::Compare { backends, .. } => {
-                assert_eq!(backends, vec![BackendKind::Bm25, BackendKind::Dense]);
+                assert_eq!(
+                    backends,
+                    vec![
+                        BackendSpec::builtin(BackendKind::Bm25),
+                        BackendSpec::builtin(BackendKind::Dense)
+                    ]
+                );
             }
             _ => panic!("--compare must win over --backend"),
         }

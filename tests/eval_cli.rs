@@ -1,5 +1,6 @@
 //! `kanon eval` end to end through the binary: JSON on stdout or in `--json`, the table on
-//! stderr, exit 2 when `--gate` fails.
+//! stderr, exit 2 when `--gate` fails, the nDCG columns, the negative share and
+//! `--gate-metric`.
 
 use std::fs;
 use std::path::Path;
@@ -118,6 +119,198 @@ fn eval_writes_json_and_exits_2_when_the_gate_fails() {
     let out = kanon(root, &["eval"]);
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains("no query file"));
+}
+
+/// The workspace plus a second page, a graded query over both pages (`README.md` at 3,
+/// `quotas.md` at 1) and two negative queries, one that nothing matches and one that the
+/// quotas page answers weakly.
+fn graded_workspace() -> tempfile::TempDir {
+    let dir = workspace();
+    let other = dir.path().join("artifact/handbook/docs/user/quotas.md");
+    fs::write(&other, "# Quotas\n\nUpload quotas and caching limits.\n").unwrap();
+    fs::write(
+        dir.path().join("queries.jsonl"),
+        "{\"id\": \"q\", \"kind\": \"howto\", \"query\": \"enable upload caching\", \
+         \"expected\": [\"handbook::docs/user/README.md\"], \
+         \"graded\": {\"handbook::docs/user/README.md\": 3, \"handbook::docs/user/quotas.md\": 1}}\n\
+         {\"id\": \"none\", \"kind\": \"negative\", \"query\": \"zebra chess brackets\", \
+         \"expected\": []}\n\
+         {\"id\": \"weak\", \"kind\": \"negative\", \"query\": \"quotas\", \"expected\": []}\n",
+    )
+    .unwrap();
+    dir
+}
+
+/// A graded row and two negative rows: the table carries the nDCG columns and the negative
+/// line, the JSON carries `ndcg@5`/`ndcg@10`, `rels`, `top_score` and the `negative` block, and
+/// the threshold decides what counts as rejected.
+#[test]
+fn eval_reports_ndcg_columns_and_the_negative_share() {
+    let dir = graded_workspace();
+    let root = dir.path();
+
+    let out = kanon(
+        root,
+        &[
+            "eval",
+            "--queries",
+            "queries.jsonl",
+            "--json",
+            "baseline.json",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("| split | kind | n | recall@5 | recall@10 | MRR | nDCG@5 | nDCG@10 |"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("| tuning | overall | 1 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 |"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("tuning: 2 negative queries, 1 rejected (0.500)"),
+        "{stderr}"
+    );
+    let summary: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(root.join("baseline.json")).unwrap()).unwrap();
+    assert_eq!(summary["tuning"]["overall"]["ndcg@5"], 1.0);
+    assert_eq!(summary["tuning"]["overall"]["ndcg@10"], 1.0);
+    assert_eq!(summary["tuning"]["overall"]["n"], 1);
+    assert!(summary["tuning"]["per_kind"].get("negative").is_none());
+    assert_eq!(summary["tuning"]["negative"]["n"], 2);
+    assert_eq!(summary["tuning"]["negative"]["rejected"], 1);
+    assert_eq!(summary["tuning"]["negative"]["share"], 0.5);
+    let q = &summary["queries"][0];
+    assert_eq!(q["rels"], serde_json::json!([3, 1]));
+    assert_eq!(q["ndcg5"], 1.0);
+    assert!(q["top_score"].is_f64(), "{q}");
+    let none = &summary["queries"][1];
+    assert_eq!(none["top"], serde_json::json!([]));
+    assert!(none.get("top_score").is_none(), "{none}");
+
+    // A threshold above every score rejects the weak one too.
+    let out = kanon(
+        root,
+        &[
+            "eval",
+            "--queries",
+            "queries.jsonl",
+            "--negative-threshold",
+            "1000",
+        ],
+    );
+    assert!(out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("2 negative queries, 2 rejected (1.000)"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// `--gate-metric` (or `gate_metric` in the config) names the tuning metric the gate compares;
+/// the flag wins over the config and an unknown name is a usage error.
+#[test]
+fn eval_gates_on_the_named_metric() {
+    let dir = graded_workspace();
+    let root = dir.path();
+    let out = kanon(
+        root,
+        &[
+            "eval",
+            "--queries",
+            "queries.jsonl",
+            "--json",
+            "baseline.json",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // --gate-metric names the metric in the gate line; the baseline matches, so it passes.
+    let out = kanon(
+        root,
+        &[
+            "eval",
+            "--queries",
+            "queries.jsonl",
+            "--gate",
+            "baseline.json",
+            "--gate-metric",
+            "ndcg5",
+        ],
+    );
+    assert!(out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("gate: tuning nDCG@5 1.000 → 1.000"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let out = kanon(
+        root,
+        &[
+            "eval",
+            "--queries",
+            "queries.jsonl",
+            "--gate",
+            "baseline.json",
+            "--gate-metric",
+            "precision5",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(2), "clap usage error");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("unknown gate metric"));
+
+    // The config's gate_metric applies to a bare eval; the flag still wins over it. Swapping
+    // the grades (README.md 1, quotas.md 3, returned in that order) drops nDCG@5 to
+    // (1 + 7/log2 3) / (7 + 1/log2 3) = 0.710 while recall@5 stays at 1.0, so the gate fails on
+    // ndcg5 and passes on recall5.
+    fs::write(
+        root.join("kanon.yaml"),
+        "queries: queries.jsonl\nmax_recall_drop: 0.1\ngate_metric: ndcg5\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("queries.jsonl"),
+        "{\"id\": \"q\", \"kind\": \"howto\", \"query\": \"enable upload caching\", \
+         \"expected\": [\"handbook::docs/user/\"], \
+         \"graded\": {\"handbook::docs/user/README.md\": 1, \"handbook::docs/user/quotas.md\": 3}}\n",
+    )
+    .unwrap();
+    let run = |extra: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_kanon"))
+            .current_dir(root)
+            .args(["--config", "kanon.yaml", "eval", "--gate", "baseline.json"])
+            .args(extra)
+            .output()
+            .expect("kanon runs")
+    };
+    let out = run(&[]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("gate: tuning nDCG@5 1.000 → 0.710, drop +0.290, max 0.100: FAILED"),
+        "{stderr}"
+    );
+    let out = run(&["--gate-metric", "recall5"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("gate: tuning recall@5 1.000 → 1.000"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 /// A config that fixes `eval.backend` makes a bare `eval` measure that backend,

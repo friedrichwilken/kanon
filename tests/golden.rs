@@ -6,7 +6,8 @@
 //! page with H2/H3 sections and a `_residue` directory, plus a fourth source (`schemas`) whose
 //! one page is a CRD rendered through the built-in `openapi` renderer, pinning the
 //! identifier-compound tokeniser rule, and a near-duplicate pair for
-//! `tests/duplicates.rs`; `queries.jsonl` holds fourteen queries, two of them held out. The
+//! `tests/duplicates.rs`; `queries.jsonl` holds fifteen queries, two of them held out, two
+//! with grades for nDCG and one negative (the corpus does not answer it). The
 //! expected metrics are whatever the implementation yields, pinned in
 //! `expected.json`; `expected-baseline.json` is the plain result alone, as `eval --json`
 //! writes it, the baseline the self-test gate in `ci.yml` measures the fixture against.

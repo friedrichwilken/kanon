@@ -5,6 +5,8 @@
       "overall": {
         "mrr": 0.25,
         "n": 2,
+        "ndcg@10": 0.31546487678572877,
+        "ndcg@5": 0.31546487678572877,
         "recall@10": 0.5,
         "recall@5": 0.5
       },
@@ -12,6 +14,8 @@
         "howto": {
           "mrr": 0.25,
           "n": 2,
+          "ndcg@10": 0.31546487678572877,
+          "ndcg@5": 0.31546487678572877,
           "recall@10": 0.5,
           "recall@5": 0.5
         }
@@ -24,6 +28,20 @@
         "holdout": false,
         "id": "install",
         "kind": "howto",
+        "ndcg10": 0.7569858564045292,
+        "ndcg5": 0.6735439182299785,
+        "rels": [
+          3,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          2
+        ],
         "rr": 1.0,
         "top": [
           "handbook::docs/install.md",
@@ -36,7 +54,8 @@
           "cookbook::docs/recipes/webhooks.md",
           "handbook::docs/configuration.md",
           "handbook::docs/getting-started.md"
-        ]
+        ],
+        "top_score": 0.816497
       },
       {
         "hit10": true,
@@ -44,6 +63,20 @@
         "holdout": false,
         "id": "backup",
         "kind": "howto",
+        "ndcg10": 0.43067655807339306,
+        "ndcg5": 0.43067655807339306,
+        "rels": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
         "rr": 0.25,
         "top": [
           "cookbook::docs/recipes/cron-jobs.md",
@@ -56,7 +89,8 @@
           "handbook::docs/configuration.md",
           "handbook::docs/troubleshooting/startup-failures.md",
           "guides::docs/rotate-keys.md"
-        ]
+        ],
+        "top_score": 0.892844
       },
       {
         "hit10": true,
@@ -64,6 +98,20 @@
         "holdout": false,
         "id": "tls-port",
         "kind": "reference",
+        "ndcg10": 0.41983579082417805,
+        "ndcg5": 0.28830303496406084,
+        "rels": [
+          0,
+          0,
+          0,
+          0,
+          3,
+          0,
+          0,
+          2,
+          0,
+          1
+        ],
         "rr": 0.2,
         "top": [
           "handbook::docs/tutorials/first-project.md",
@@ -76,7 +124,43 @@
           "handbook::docs/reference/config-keys.md",
           "handbook::docs/install.md",
           "guides::docs/set-up-tls.md"
-        ]
+        ],
+        "top_score": 0.843274
+      },
+      {
+        "hit10": false,
+        "hit5": false,
+        "holdout": false,
+        "id": "no-answer",
+        "kind": "negative",
+        "ndcg10": 0.0,
+        "ndcg5": 0.0,
+        "rels": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "rr": 0.0,
+        "top": [
+          "handbook::docs/concepts/architecture.md",
+          "handbook::docs/tutorials/backup-restore.md",
+          "handbook::docs/upgrade.md",
+          "handbook::docs/troubleshooting/startup-failures.md",
+          "handbook::docs/reference/cli.md",
+          "guides::docs/rotate-keys.md",
+          "schemas::reference/messaging.example.com/subscription-v1.md",
+          "cookbook::docs/recipes/webhooks.md",
+          "handbook::docs/getting-started.md",
+          "cookbook::docs/recipes/export-csv.md"
+        ],
+        "top_score": 0.903696
       },
       {
         "hit10": true,
@@ -84,6 +168,20 @@
         "holdout": false,
         "id": "rotate-keys",
         "kind": "howto",
+        "ndcg10": 1.0,
+        "ndcg5": 1.0,
+        "rels": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
         "rr": 1.0,
         "top": [
           "guides::docs/rotate-keys.md",
@@ -96,7 +194,8 @@
           "handbook::docs/reference/config-keys.md",
           "cookbook::docs/recipes/rate-limiting.md",
           "handbook::docs/concepts/architecture.md"
-        ]
+        ],
+        "top_score": 0.938194
       },
       {
         "hit10": true,
@@ -104,6 +203,20 @@
         "holdout": false,
         "id": "caching",
         "kind": "howto",
+        "ndcg10": 0.6309297535714575,
+        "ndcg5": 0.6309297535714575,
+        "rels": [
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
         "rr": 0.5,
         "top": [
           "handbook::docs/tutorials/first-project.md",
@@ -116,7 +229,8 @@
           "handbook::docs/concepts/storage.md",
           "guides::docs/quota-limits.md",
           "handbook::docs/troubleshooting/startup-failures.md"
-        ]
+        ],
+        "top_score": 0.968963
       },
       {
         "hit10": true,
@@ -124,6 +238,20 @@
         "holdout": false,
         "id": "quota",
         "kind": "reference",
+        "ndcg10": 0.6309297535714575,
+        "ndcg5": 0.6309297535714575,
+        "rels": [
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
         "rr": 0.5,
         "top": [
           "handbook::docs/concepts/networking.md",
@@ -136,7 +264,8 @@
           "handbook::docs/install.md",
           "cookbook::docs/recipes/rate-limiting.md",
           "guides::docs/enable-caching.md"
-        ]
+        ],
+        "top_score": 0.73646
       },
       {
         "hit10": true,
@@ -144,6 +273,20 @@
         "holdout": false,
         "id": "startup",
         "kind": "troubleshooting",
+        "ndcg10": 0.43067655807339306,
+        "ndcg5": 0.43067655807339306,
+        "rels": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
         "rr": 0.25,
         "top": [
           "handbook::docs/install.md",
@@ -156,7 +299,8 @@
           "handbook::docs/configuration.md",
           "handbook::docs/concepts/networking.md",
           "handbook::docs/concepts/notifications.md"
-        ]
+        ],
+        "top_score": 0.903696
       },
       {
         "hit10": true,
@@ -164,6 +308,20 @@
         "holdout": false,
         "id": "slow",
         "kind": "troubleshooting",
+        "ndcg10": 1.0,
+        "ndcg5": 1.0,
+        "rels": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
         "rr": 1.0,
         "top": [
           "handbook::docs/troubleshooting/slow-queries.md",
@@ -176,7 +334,8 @@
           "guides::docs/monitor-metrics.md",
           "guides::docs/quota-limits.md",
           "handbook::docs/tutorials/backup-restore.md"
-        ]
+        ],
+        "top_score": 0.877058
       },
       {
         "hit10": true,
@@ -184,6 +343,20 @@
         "holdout": false,
         "id": "architecture",
         "kind": "concept",
+        "ndcg10": 0.3010299956639812,
+        "ndcg5": 0.0,
+        "rels": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
         "rr": 0.1111111111111111,
         "top": [
           "handbook::docs/tutorials/backup-restore.md",
@@ -196,7 +369,8 @@
           "handbook::docs/troubleshooting/startup-failures.md",
           "handbook::docs/concepts/architecture.md",
           "cookbook::docs/recipes/notification-templates.md"
-        ]
+        ],
+        "top_score": 0.656532
       },
       {
         "hit10": false,
@@ -204,6 +378,20 @@
         "holdout": false,
         "id": "plugin",
         "kind": "howto",
+        "ndcg10": 0.0,
+        "ndcg5": 0.0,
+        "rels": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
         "rr": 0.0,
         "top": [
           "guides::docs/rotate-keys.md",
@@ -216,7 +404,8 @@
           "handbook::docs/reference/cli.md",
           "guides::docs/scale-workers.md",
           "handbook::docs/troubleshooting/startup-failures.md"
-        ]
+        ],
+        "top_score": 0.883883
       },
       {
         "hit10": false,
@@ -224,6 +413,20 @@
         "holdout": false,
         "id": "crd-sink-field",
         "kind": "reference",
+        "ndcg10": 0.0,
+        "ndcg5": 0.0,
+        "rels": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
         "rr": 0.0,
         "top": [
           "handbook::docs/configuration.md",
@@ -236,7 +439,8 @@
           "handbook::docs/concepts/networking.md",
           "handbook::docs/upgrade.md",
           "guides::docs/monitor-metrics.md"
-        ]
+        ],
+        "top_score": 0.862316
       },
       {
         "hit10": false,
@@ -244,6 +448,20 @@
         "holdout": false,
         "id": "crd-type-matching-field",
         "kind": "reference",
+        "ndcg10": 0.0,
+        "ndcg5": 0.0,
+        "rels": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
         "rr": 0.0,
         "top": [
           "guides::docs/set-up-tls.md",
@@ -256,7 +474,8 @@
           "handbook::docs/concepts/networking.md",
           "handbook::docs/troubleshooting/startup-failures.md",
           "guides::docs/monitor-metrics.md"
-        ]
+        ],
+        "top_score": 0.730297
       },
       {
         "hit10": false,
@@ -264,6 +483,20 @@
         "holdout": true,
         "id": "webhooks",
         "kind": "howto",
+        "ndcg10": 0.0,
+        "ndcg5": 0.0,
+        "rels": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
         "rr": 0.0,
         "top": [
           "handbook::docs/tutorials/first-project.md",
@@ -276,7 +509,8 @@
           "handbook::docs/reference/config-keys.md",
           "handbook::docs/install.md",
           "guides::docs/set-up-tls.md"
-        ]
+        ],
+        "top_score": 0.843274
       },
       {
         "hit10": true,
@@ -284,6 +518,20 @@
         "holdout": true,
         "id": "metrics",
         "kind": "howto",
+        "ndcg10": 0.6309297535714575,
+        "ndcg5": 0.6309297535714575,
+        "rels": [
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
         "rr": 0.5,
         "top": [
           "guides::docs/quota-limits.md",
@@ -296,13 +544,21 @@
           "schemas::reference/messaging.example.com/subscription-v1.md",
           "handbook::docs/concepts/networking.md",
           "guides::docs/scale-workers.md"
-        ]
+        ],
+        "top_score": 0.76277
       }
     ],
     "tuning": {
+      "negative": {
+        "n": 1,
+        "rejected": 0,
+        "share": 0.0
+      },
       "overall": {
         "mrr": 0.4009259259259259,
         "n": 12,
+        "ndcg@10": 0.46675535551519914,
+        "ndcg@5": 0.42375496470697843,
         "recall@10": 0.75,
         "recall@5": 0.6666666666666666
       },
@@ -310,24 +566,32 @@
         "concept": {
           "mrr": 0.1111111111111111,
           "n": 1,
+          "ndcg@10": 0.3010299956639812,
+          "ndcg@5": 0.0,
           "recall@10": 1.0,
           "recall@5": 0.0
         },
         "howto": {
           "mrr": 0.55,
           "n": 5,
+          "ndcg@10": 0.563718433609876,
+          "ndcg@5": 0.5470300459749659,
           "recall@10": 0.8,
           "recall@5": 0.8
         },
         "reference": {
           "mrr": 0.175,
           "n": 4,
+          "ndcg@10": 0.2626913860989089,
+          "ndcg@5": 0.2298081971338796,
           "recall@10": 0.5,
           "recall@5": 0.5
         },
         "troubleshooting": {
           "mrr": 0.625,
           "n": 2,
+          "ndcg@10": 0.7153382790366966,
+          "ndcg@5": 0.7153382790366966,
           "recall@10": 1.0,
           "recall@5": 1.0
         }

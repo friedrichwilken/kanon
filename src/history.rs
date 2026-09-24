@@ -279,9 +279,9 @@ pub fn read_history(dir: &Path) -> Result<Vec<HistoryRow>, HistoryError> {
 /// The history as a Markdown table, one row per run.
 pub fn render_table(rows: &[HistoryRow]) -> String {
     let mut out = String::from(
-        "| # | label | backend | tuning recall@5 | recall@10 | MRR | n \
-         | held-out recall@5 | recall@10 | MRR | n | manifest | at |\n\
-         |---|---|---|---|---|---|---|---|---|---|---|---|---|\n",
+        "| # | label | backend | tuning recall@5 | recall@10 | MRR | nDCG@5 | nDCG@10 | n \
+         | held-out recall@5 | recall@10 | MRR | nDCG@5 | nDCG@10 | n | manifest | at |\n\
+         |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n",
     );
     for row in rows {
         let dash = || "–".to_string();
@@ -298,17 +298,22 @@ pub fn render_table(rows: &[HistoryRow]) -> String {
             .map_or_else(dash, |sha| sha.chars().take(8).collect());
         let _ = writeln!(
             out,
-            "| {:03} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {manifest} | {} |",
+            "| {:03} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} \
+             | {manifest} | {} |",
             row.seq,
             text(row.label.as_ref()),
             text(row.backend.as_ref()),
             metric(tuning, |m| m.recall5),
             metric(tuning, |m| m.recall10),
             metric(tuning, |m| m.mrr),
+            metric(tuning, |m| m.ndcg5),
+            metric(tuning, |m| m.ndcg10),
             n(tuning),
             metric(holdout, |m| m.recall5),
             metric(holdout, |m| m.recall10),
             metric(holdout, |m| m.mrr),
+            metric(holdout, |m| m.ndcg5),
+            metric(holdout, |m| m.ndcg10),
             n(holdout),
             text(row.at.as_ref()),
         );
@@ -329,6 +334,8 @@ mod tests {
             recall5: r5,
             recall10: r10,
             mrr,
+            ndcg5: mrr - 0.02,
+            ndcg10: mrr + 0.02,
             n,
         }
     }
@@ -338,10 +345,12 @@ mod tests {
             tuning: Split {
                 overall: metrics(0.8, 0.85, 0.66, 40),
                 per_kind: BTreeMap::new(),
+                negative: None,
             },
             holdout: with_holdout.then(|| Split {
                 overall: metrics(0.7, 0.8, 0.6, 10),
                 per_kind: BTreeMap::new(),
+                negative: None,
             }),
             queries: vec![],
             backend: "bm25".to_string(),
@@ -526,14 +535,15 @@ mod tests {
         assert!(table.starts_with("| # | label | backend | tuning recall@5 |"));
         assert!(
             table.contains(
-                "| 001 | first | bm25 | 0.800 | 0.850 | 0.660 | 40 | 0.700 | 0.800 | 0.600 | 10 \
-                 | abababab | 2026-09-16T12:00:00Z |"
+                "| 001 | first | bm25 | 0.800 | 0.850 | 0.660 | 0.640 | 0.680 | 40 \
+                 | 0.700 | 0.800 | 0.600 | 0.580 | 0.620 | 10 | abababab | 2026-09-16T12:00:00Z |"
             ),
             "{table}"
         );
         assert!(
             table.contains(
-                "| 002 | – | bm25 | 0.800 | 0.850 | 0.660 | 40 | – | – | – | – | – | – |"
+                "| 002 | – | bm25 | 0.800 | 0.850 | 0.660 | 0.640 | 0.680 | 40 \
+                 | – | – | – | – | – | – | – | – |"
             ),
             "{table}"
         );

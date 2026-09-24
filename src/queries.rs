@@ -6,10 +6,12 @@
 //! `<source>::<path>` form, or `<source>::<path>/` when it only matches pages as a directory
 //! prefix. `add --from suggestions.jsonl --accept ID…` appends chosen rows of a suggestions
 //! file through the same check, keeping their `origin`. `check` re-validates the whole file:
-//! unknown expected ids, duplicate query ids, and the held-out share against `holdout_min`.
-//! `import` turns `kanon grade`'s `graded.jsonl` into query rows, one per distinct query,
-//! `expected` being the ids graded at or above a threshold. [`suggest`] asks a model for
-//! questions a sample of pages answers, for a human to accept.
+//! unknown expected and graded ids, grades above [`MAX_GRADE`], an empty `expected` on any row
+//! that is not a negative query, duplicate query ids, and the held-out share against
+//! `holdout_min`. `import` turns `kanon grade`'s `graded.jsonl` into query rows, one per
+//! distinct query, `expected` being the ids graded at or above a threshold and `graded` every
+//! candidate with its grade. [`suggest`] asks a model for questions a sample of pages answers,
+//! for a human to accept.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -17,7 +19,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use thiserror::Error;
 
-use crate::eval::{self, Query};
+use crate::eval::{self, MAX_GRADE, Query};
 use crate::grade::GradedRow;
 use crate::num::float;
 use crate::rng::SplitMix64;
@@ -136,6 +138,7 @@ pub fn add_all(
                 id: new.id.clone(),
                 query: new.query.clone(),
                 expected,
+                graded: BTreeMap::new(),
                 kind: new.kind.clone(),
                 holdout: new.holdout,
                 origin: new.origin.clone(),
@@ -156,8 +159,12 @@ fn jsonl_error(err: JsonlError) -> QueriesError {
 /// The outcome of `queries check`; exit 4 when [`CheckReport::ok`] is false.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct CheckReport {
-    /// `(query id, expected entry)` pairs that match no page in the manifest.
+    /// `(query id, expected or graded entry)` pairs that match no page in the manifest.
     pub unknown: Vec<(String, String)>,
+    /// `(query id, graded entry, grade)` triples whose grade is above [`MAX_GRADE`].
+    pub bad_grade: Vec<(String, String, u8)>,
+    /// Ids of rows with an empty `expected` list that are not negative queries.
+    pub empty_expected: Vec<String>,
     /// Query ids that appear more than once.
     pub duplicate_ids: Vec<String>,
     /// Held-out fraction of all queries (`0.0` when there are none).
@@ -170,6 +177,8 @@ impl CheckReport {
     /// Whether the query set passes every check.
     pub fn ok(&self) -> bool {
         self.unknown.is_empty()
+            && self.bad_grade.is_empty()
+            && self.empty_expected.is_empty()
             && self.duplicate_ids.is_empty()
             && self.holdout_share >= self.holdout_min
     }
@@ -183,18 +192,30 @@ fn share(count: usize, total: usize) -> f64 {
     }
 }
 
-/// Validate `queries` against `manifest`: unknown expected ids, duplicate query ids, and the
-/// held-out share against `holdout_min`.
+/// Validate `queries` against `manifest`: unknown expected and graded ids, grades above
+/// [`MAX_GRADE`], an empty `expected` on a row that is not a negative query, duplicate query
+/// ids, and the held-out share against `holdout_min`.
 pub fn check(queries: &[Query], manifest: &Manifest, holdout_min: f64) -> CheckReport {
     let mut unknown = Vec::new();
+    let mut bad_grade = Vec::new();
+    let mut empty_expected = Vec::new();
     for query in queries {
+        let known = |entry: &str| manifest.pages().any(|(id, ..)| eval::matches(&id, entry));
         for expected in &query.expected {
-            if !manifest
-                .pages()
-                .any(|(id, ..)| eval::matches(&id, expected))
-            {
+            if !known(expected) {
                 unknown.push((query.id.clone(), expected.clone()));
             }
+        }
+        for (entry, grade) in &query.graded {
+            if !known(entry) {
+                unknown.push((query.id.clone(), entry.clone()));
+            }
+            if *grade > MAX_GRADE {
+                bad_grade.push((query.id.clone(), entry.clone(), *grade));
+            }
+        }
+        if query.expected.is_empty() && !query.is_negative() {
+            empty_expected.push(query.id.clone());
         }
     }
     let mut counts = std::collections::BTreeMap::new();
@@ -209,6 +230,8 @@ pub fn check(queries: &[Query], manifest: &Manifest, holdout_min: f64) -> CheckR
     let holdout_share = share(queries.iter().filter(|q| q.holdout).count(), queries.len());
     CheckReport {
         unknown,
+        bad_grade,
+        empty_expected,
         duplicate_ids,
         holdout_share,
         holdout_min,
@@ -227,6 +250,8 @@ pub struct GradedQuery {
     pub query: String,
     /// Ids graded at or above `--min-grade` for this query.
     pub expected: Vec<String>,
+    /// Every candidate with its grade, 0 and 1 included, for nDCG.
+    pub graded: BTreeMap<String, u8>,
     /// Always empty: grading carries no `kind`.
     pub kind: String,
     /// Assigned at random (seeded by `--seed`) to approximate `--holdout-share`.
@@ -262,7 +287,8 @@ pub(crate) fn query_id(query: &str) -> String {
 }
 
 /// Turn graded rows into query rows: one per distinct query, `expected` the ids
-/// graded at or above `min_grade`, `holdout` drawn from a `seed`-ed PRNG to approximate
+/// graded at or above `min_grade`, `graded` every candidate with its grade (the highest when
+/// an id was graded more than once), `holdout` drawn from a `seed`-ed PRNG to approximate
 /// `holdout_share`. Returns the rows to append and the query texts with no passing candidate
 /// (skipped, for the caller to report).
 pub fn import_graded(
@@ -290,11 +316,17 @@ pub fn import_graded(
             skipped.push((*query).to_string());
             continue;
         }
+        let mut graded: BTreeMap<String, u8> = BTreeMap::new();
+        for row in group {
+            let grade = graded.entry(row.id.clone()).or_default();
+            *grade = (*grade).max(row.grade);
+        }
         let model = group.first().map_or("unknown", |row| row.model.as_str());
         rows.push(GradedQuery {
             id: query_id(query),
             query: (*query).to_string(),
             expected,
+            graded,
             kind: String::new(),
             holdout: rng.next_f64() < holdout_share,
             by: format!("grader:{model}"),
@@ -451,6 +483,7 @@ mod tests {
             id: id.to_string(),
             query: "q".to_string(),
             expected: expected.iter().map(|s| (*s).to_string()).collect(),
+            graded: BTreeMap::new(),
             kind: String::new(),
             holdout,
             origin: None,
@@ -492,6 +525,57 @@ mod tests {
         assert!(report.holdout_share.abs() < 1e-12);
     }
 
+    #[test]
+    fn check_rejects_empty_expected_lists_except_on_negative_rows() {
+        let m = manifest();
+        let mut negative = query("nothing", &[], false);
+        negative.kind = eval::NEGATIVE_KIND.to_string();
+        let queries = vec![
+            query("caching", &["handbook::docs/user/caching.md"], true),
+            negative,
+            query("empty", &[], false),
+        ];
+        let report = check(&queries, &m, 0.0);
+        assert!(!report.ok());
+        assert_eq!(report.empty_expected, ["empty"]);
+        assert!(report.unknown.is_empty() && report.bad_grade.is_empty());
+        // The negative row alone passes.
+        let report = check(&queries[..2], &m, 0.0);
+        assert!(report.ok(), "{report:?}");
+    }
+
+    #[test]
+    fn check_validates_graded_keys_and_grades() {
+        let m = manifest();
+        let mut graded = query("caching", &["handbook::docs/user/caching.md"], true);
+        graded.graded = BTreeMap::from([
+            ("handbook::docs/user/caching.md".to_string(), 3),
+            ("handbook::docs/user/".to_string(), 1),
+            ("handbook::docs/user/quotas.md".to_string(), 0),
+        ]);
+        let report = check(std::slice::from_ref(&graded), &m, 0.0);
+        assert!(report.ok(), "{report:?}");
+
+        graded.graded.insert("handbook::missing.md".to_string(), 2);
+        graded
+            .graded
+            .insert("handbook::docs/user/quotas.md".to_string(), 4);
+        let report = check(std::slice::from_ref(&graded), &m, 0.0);
+        assert!(!report.ok());
+        assert_eq!(
+            report.unknown,
+            [("caching".to_string(), "handbook::missing.md".to_string())]
+        );
+        assert_eq!(
+            report.bad_grade,
+            [(
+                "caching".to_string(),
+                "handbook::docs/user/quotas.md".to_string(),
+                4
+            )]
+        );
+    }
+
     fn graded(query: &str, id: &str, grade: u8) -> GradedRow {
         GradedRow {
             query: query.to_string(),
@@ -508,6 +592,8 @@ mod tests {
             graded("caching", "h::a.md", 3),
             graded("caching", "h::b.md", 1),
             graded("caching", "h::c.md", 2),
+            graded("caching", "h::b.md", 0),
+            graded("caching", "h::e.md", 0),
             graded("quotas", "h::d.md", 0),
         ];
         let (imported, skipped) = import_graded(&rows, 2, 0.0, 42);
@@ -515,6 +601,16 @@ mod tests {
         assert_eq!(imported.len(), 1);
         assert_eq!(imported[0].query, "caching");
         assert_eq!(imported[0].expected, ["h::a.md", "h::c.md"]);
+        // Every candidate keeps its grade, 0 and 1 included; a repeat keeps the higher one.
+        assert_eq!(
+            imported[0].graded,
+            BTreeMap::from([
+                ("h::a.md".to_string(), 3),
+                ("h::b.md".to_string(), 1),
+                ("h::c.md".to_string(), 2),
+                ("h::e.md".to_string(), 0),
+            ])
+        );
         assert_eq!(imported[0].by, "grader:grader-model");
         assert_eq!(imported[0].kind, "");
     }
@@ -556,6 +652,10 @@ mod tests {
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].query, "caching");
         assert_eq!(loaded[0].expected, ["h::a.md"]);
+        assert_eq!(
+            loaded[0].graded,
+            BTreeMap::from([("h::a.md".to_string(), 3)])
+        );
         assert!(!loaded[0].holdout);
     }
 }

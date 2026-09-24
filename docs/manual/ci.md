@@ -17,8 +17,9 @@ kanon report --eval-before $baseline --eval-after eval.json --runs $runs_dir
 
 The report goes to the job summary and, on a pull request, into one comment that is updated on
 every push (found again by its first line, `<!-- kanon-eval: NAME -->`). The job's exit code is
-`kanon eval`'s: **0** the gate passed, **2** tuning recall@5 dropped by more than
-`max_recall_drop`, **1** an error. A failed gate fails the job after the summary and the
+`kanon eval`'s: **0** the gate passed, **2** the gated tuning metric (recall@5, or the config's
+`gate_metric`) dropped by more than `max_recall_drop`, **1** an error. A failed gate fails the
+job after the summary and the
 comment are written, so the numbers are visible on the pull request either way.
 
 When the baseline file does not exist yet, the run is recorded but not gated. With

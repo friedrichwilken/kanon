@@ -1,6 +1,7 @@
-{"id": "install", "kind": "howto", "query": "how do I install the service", "expected": ["handbook::docs/install.md"]}
+{"id": "install", "kind": "howto", "query": "how do I install the service", "expected": ["handbook::docs/install.md"], "graded": {"handbook::docs/install.md": 3, "handbook::docs/getting-started.md": 2, "handbook::docs/upgrade.md": 2, "handbook::docs/uninstall.md": 0}}
 {"id": "backup", "kind": "howto", "query": "back up and restore data", "expected": ["handbook::docs/tutorials/backup-restore.md"]}
-{"id": "tls-port", "kind": "reference", "query": "which port does TLS use", "expected": ["handbook::docs/configuration.md", "handbook::docs/reference/config-keys.md"]}
+{"id": "tls-port", "kind": "reference", "query": "which port does TLS use", "expected": ["handbook::docs/configuration.md", "handbook::docs/reference/config-keys.md"], "graded": {"handbook::docs/configuration.md": 3, "handbook::docs/reference/config-keys.md": 2, "guides::docs/set-up-tls.md": 1}}
+{"id": "no-answer", "kind": "negative", "query": "zebra chess tournament brackets", "expected": []}
 {"id": "rotate-keys", "kind": "howto", "query": "rotate the signing keys", "expected": ["guides::docs/rotate-keys.md"]}
 {"id": "caching", "kind": "howto", "query": "enable caching for uploads", "expected": ["guides::docs/enable-caching.md"]}
 {"id": "quota", "kind": "reference", "query": "what are the quota limits", "expected": ["guides::docs/quota-limits.md"]}

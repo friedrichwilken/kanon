@@ -18,7 +18,8 @@ pub(crate) enum QueriesCommand {
     /// Append a row after checking `--expected` against the committed manifest, or accept rows
     /// of a suggestions file with `--from`.
     Add(QueriesAddArgs),
-    /// Fail (exit 4) on unknown expected ids, duplicate ids or too small a held-out share.
+    /// Fail (exit 4) on unknown expected or graded ids, a grade above 3, an empty expected list
+    /// on a row that is not `kind: "negative"`, duplicate ids or too small a held-out share.
     Check {
         /// Query file (default: `queries` from the config).
         #[arg(long, value_name = "FILE")]
@@ -193,6 +194,14 @@ fn run_queries_check(paths: &Paths, queries: Option<&std::path::Path>) -> Result
     let report = commands::queries_check(paths, queries)?;
     for (id, expected) in &report.unknown {
         eprintln!("unknown: {id}: expected {expected:?} matches no page in the manifest");
+    }
+    for (id, entry, grade) in &report.bad_grade {
+        eprintln!("bad grade: {id}: graded {entry:?} is {grade}, above the maximum of 3");
+    }
+    for id in &report.empty_expected {
+        eprintln!(
+            "empty: {id}: no expected pages; only a row with kind \"negative\" may have none"
+        );
     }
     for id in &report.duplicate_ids {
         eprintln!("duplicate: {id}");

@@ -124,13 +124,15 @@ fn eval_out_numbers_run_files_and_history_lists_them() {
     let lines: Vec<&str> = table.lines().collect();
     assert_eq!(lines.len(), 4, "{table}");
     assert!(
-        lines[0].starts_with("| # | label | backend | tuning recall@5 | recall@10 | MRR | n |"),
+        lines[0].starts_with(
+            "| # | label | backend | tuning recall@5 | recall@10 | MRR | nDCG@5 | nDCG@10 | n |"
+        ),
         "{table}"
     );
     assert!(
         lines[2].starts_with(
-            "| 001 | before-curation | bm25 | 1.000 | 1.000 | 1.000 | 1 | 0.000 | 0.000 | 0.000 \
-             | 1 | none | "
+            "| 001 | before-curation | bm25 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 1 \
+             | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 1 | none | "
         ),
         "{table}"
     );
@@ -222,7 +224,8 @@ fn history_json_report_runs_and_odd_files() {
     let table = String::from_utf8_lossy(&out.stdout);
     assert!(
         table.contains(
-            "| 003 | – | – | 1.000 | 1.000 | 1.000 | 1 | 0.000 | 0.000 | 0.000 | 1 | – | – |"
+            "| 003 | – | – | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 1 \
+             | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 1 | – | – |"
         ),
         "{table}"
     );

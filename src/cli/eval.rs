@@ -9,7 +9,7 @@ use kanon::backend::BackendKind;
 use kanon::commands::{
     self, BackendEvalOptions, BackendFlags, EvalFlags, EvalOptions, EvalPlan, Paths,
 };
-use kanon::eval;
+use kanon::eval::{self, GateMetric};
 
 use crate::cli::EXIT_GATE;
 
@@ -27,15 +27,23 @@ pub(crate) struct EvalArgs {
     /// Write the result JSON to this file instead of stdout.
     #[arg(long, value_name = "OUT")]
     json: Option<PathBuf>,
-    /// Exit 2 when tuning recall@5 drops by more than `max_recall_drop` below this result.
+    /// Exit 2 when the gated tuning metric drops by more than `max_recall_drop` below this
+    /// result.
     #[arg(long, value_name = "BASELINE")]
     gate: Option<PathBuf>,
+    /// The tuning metric `--gate` compares: recall5 (default), recall10, mrr, ndcg5 or ndcg10.
+    #[arg(long, value_name = "METRIC")]
+    gate_metric: Option<GateMetric>,
     /// Residue pages (`<source>::<path>`) to add before measuring; prints the delta.
     #[arg(long, value_name = "ID", num_args = 1..)]
     with: Vec<String>,
     /// Pages to remove before measuring; prints the delta.
     #[arg(long, value_name = "ID", num_args = 1..)]
     without: Vec<String>,
+    /// A negative query (`kind: "negative"`) counts as rejected when its top score stays under
+    /// this; without it, only an empty result list rejects.
+    #[arg(long, value_name = "SCORE")]
+    negative_threshold: Option<f64>,
     /// Retriever backend to measure: bm25 (default), bm25-tantivy, dense, hybrid or external.
     #[arg(long, value_name = "NAME")]
     backend: Option<String>,
@@ -72,8 +80,10 @@ fn eval_flags(args: EvalArgs) -> EvalFlags {
         k: args.k,
         json: args.json,
         gate: args.gate,
+        gate_metric: args.gate_metric,
         with: args.with,
         without: args.without,
+        negative_threshold: args.negative_threshold,
         backend: BackendFlags {
             backend: args.backend,
             backend_url: args.backend_url,
@@ -137,7 +147,8 @@ fn run_eval_plain(paths: &Paths, options: &EvalOptions) -> Result<ExitCode> {
     if let Some(gate) = outcome.gate {
         let verdict = if gate.passed() { "ok" } else { "FAILED" };
         eprintln!(
-            "gate: tuning recall@5 {:.3} → {:.3}, drop {:+.3}, max {:.3}: {verdict}",
+            "gate: tuning {} {:.3} → {:.3}, drop {:+.3}, max {:.3}: {verdict}",
+            gate.metric.label(),
             gate.baseline,
             gate.current,
             gate.drop(),
@@ -255,7 +266,8 @@ fn print_eval_outcome(
 fn print_gate(backend: BackendKind, gate: &eval::Gate) {
     let verdict = if gate.passed() { "ok" } else { "FAILED" };
     eprintln!(
-        "gate [{backend}]: tuning recall@5 {:.3} → {:.3}, drop {:+.3}, max {:.3}: {verdict}",
+        "gate [{backend}]: tuning {} {:.3} → {:.3}, drop {:+.3}, max {:.3}: {verdict}",
+        gate.metric.label(),
         gate.baseline,
         gate.current,
         gate.drop(),

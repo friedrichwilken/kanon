@@ -9,7 +9,9 @@
 //! `pinakes.yaml` alone; [`priorities`] reads just the `sources[].name` and `priority` keys,
 //! so a `pinakes.yaml` written for a newer or older pinakes still yields them.
 
+use std::fmt;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 use pinakes::index::Priorities;
 use serde::{Deserialize, Serialize};
@@ -23,6 +25,75 @@ pub const DEFAULT_K: usize = 10;
 pub const DEFAULT_MAX_RECALL_DROP: f64 = 0.05;
 /// Default minimum share of queries that must be held out (`holdout_min`).
 pub const DEFAULT_HOLDOUT_MIN: f64 = 0.2;
+
+/// The tuning metric `eval --gate` compares with the baseline (`gate_metric`, `--gate-metric`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GateMetric {
+    /// recall@5 (the default).
+    #[default]
+    Recall5,
+    /// recall@10.
+    Recall10,
+    /// MRR.
+    Mrr,
+    /// nDCG@5.
+    Ndcg5,
+    /// nDCG@10.
+    Ndcg10,
+}
+
+impl GateMetric {
+    /// The name on the command line and in the config: `recall5`, `recall10`, `mrr`, `ndcg5`
+    /// or `ndcg10`.
+    pub fn name(self) -> &'static str {
+        match self {
+            GateMetric::Recall5 => "recall5",
+            GateMetric::Recall10 => "recall10",
+            GateMetric::Mrr => "mrr",
+            GateMetric::Ndcg5 => "ndcg5",
+            GateMetric::Ndcg10 => "ndcg10",
+        }
+    }
+
+    /// The column label, as the eval table prints it: `recall@5`, `recall@10`, `MRR`, `nDCG@5`
+    /// or `nDCG@10`.
+    pub fn label(self) -> &'static str {
+        match self {
+            GateMetric::Recall5 => "recall@5",
+            GateMetric::Recall10 => "recall@10",
+            GateMetric::Mrr => "MRR",
+            GateMetric::Ndcg5 => "nDCG@5",
+            GateMetric::Ndcg10 => "nDCG@10",
+        }
+    }
+}
+
+impl fmt::Display for GateMetric {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+/// A gate metric name that is none of the five.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[error("unknown gate metric {0:?}: expected recall5, recall10, mrr, ndcg5 or ndcg10")]
+pub struct UnknownGateMetric(pub String);
+
+impl FromStr for GateMetric {
+    type Err = UnknownGateMetric;
+
+    fn from_str(name: &str) -> Result<GateMetric, UnknownGateMetric> {
+        match name {
+            "recall5" => Ok(GateMetric::Recall5),
+            "recall10" => Ok(GateMetric::Recall10),
+            "mrr" => Ok(GateMetric::Mrr),
+            "ndcg5" => Ok(GateMetric::Ndcg5),
+            "ndcg10" => Ok(GateMetric::Ndcg10),
+            other => Err(UnknownGateMetric(other.to_string())),
+        }
+    }
+}
 
 /// Errors raised while reading `kanon.yaml` or the `eval:` block of `pinakes.yaml`.
 #[derive(Debug, Error)]
@@ -71,11 +142,20 @@ pub struct Config {
     /// Cut-off for the result list.
     #[serde(default = "default_k")]
     pub k: usize,
-    /// `eval --gate` exits 2 when tuning recall@5 drops by more than this. Zero when the
-    /// config omits it (the tolerance is a decision, not a default); a workspace with no config
-    /// at all gets [`DEFAULT_MAX_RECALL_DROP`].
+    /// `eval --gate` exits 2 when the gated tuning metric (`gate_metric`) drops by more than
+    /// this. Zero when the config omits it (the tolerance is a decision, not a default); a
+    /// workspace with no config at all gets [`DEFAULT_MAX_RECALL_DROP`].
     #[serde(default)]
     pub max_recall_drop: f64,
+    /// The tuning metric `eval --gate` compares: `recall5` (default), `recall10`, `mrr`, `ndcg5`
+    /// or `ndcg10`; `--gate-metric` overrides it. `max_recall_drop` is the tolerance whichever
+    /// metric is gated.
+    #[serde(default)]
+    pub gate_metric: GateMetric,
+    /// A negative query (`kind: "negative"`) counts as rejected when its top score stays under
+    /// this; without it only an empty result list rejects. `--negative-threshold` overrides it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub negative_threshold: Option<f64>,
     /// `queries check` fails when the held-out share of `queries.jsonl` falls below this.
     #[serde(default = "default_holdout_min")]
     pub holdout_min: f64,
@@ -255,14 +335,19 @@ eval:
         assert_eq!(config.k, DEFAULT_K);
         assert!(config.max_recall_drop.abs() < f64::EPSILON);
         assert!((config.holdout_min - DEFAULT_HOLDOUT_MIN).abs() < f64::EPSILON);
+        assert_eq!(config.gate_metric, GateMetric::Recall5);
+        assert!(config.negative_threshold.is_none());
         assert!(config.backend.is_none() && config.backend_url.is_none());
         assert!(config.embeddings.is_none() && config.compare.is_empty());
 
         let full = "version: 1\nqueries: q.jsonl\nk: 5\nmax_recall_drop: 0.1\nholdout_min: 0.3\n\
+                    gate_metric: ndcg10\nnegative_threshold: 2.5\n\
                     backend: hybrid\nbackend_url: http://localhost:8080\n\
                     embeddings: vectors/embeddings.bin\ncompare: [bm25, dense]\n";
         let config = from_yaml(path, full).unwrap().unwrap();
         assert_eq!(config.k, 5);
+        assert_eq!(config.gate_metric, GateMetric::Ndcg10);
+        assert_eq!(config.negative_threshold, Some(2.5));
         assert_eq!(config.backend.as_deref(), Some("hybrid"));
         assert_eq!(config.backend_url.as_deref(), Some("http://localhost:8080"));
         assert_eq!(
@@ -305,6 +390,32 @@ eval:
         ));
         assert!(matches!(
             from_yaml(path, "queries: [\n").unwrap_err(),
+            ConfigError::Yaml { .. }
+        ));
+    }
+
+    #[test]
+    fn gate_metric_names_parse_and_print() {
+        for (name, metric, label) in [
+            ("recall5", GateMetric::Recall5, "recall@5"),
+            ("recall10", GateMetric::Recall10, "recall@10"),
+            ("mrr", GateMetric::Mrr, "MRR"),
+            ("ndcg5", GateMetric::Ndcg5, "nDCG@5"),
+            ("ndcg10", GateMetric::Ndcg10, "nDCG@10"),
+        ] {
+            assert_eq!(name.parse::<GateMetric>().unwrap(), metric);
+            assert_eq!(metric.to_string(), name);
+            assert_eq!(metric.label(), label);
+        }
+        let err = "recall@5".parse::<GateMetric>().unwrap_err();
+        assert_eq!(err, UnknownGateMetric("recall@5".to_string()));
+        assert!(err.to_string().contains("expected recall5"), "{err}");
+        assert!(matches!(
+            from_yaml(
+                Path::new("kanon.yaml"),
+                "queries: q\ngate_metric: precision5\n"
+            )
+            .unwrap_err(),
             ConfigError::Yaml { .. }
         ));
     }

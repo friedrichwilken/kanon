@@ -3,11 +3,11 @@
 use std::path::{Path, PathBuf};
 
 use kanon::config::priorities;
+use kanon::contracts::read_trail;
 use kanon::grade::{self, GradedRow};
 use pinakes::index::Index;
 use pinakes::llm::LlmConfig;
 use pinakes::llm::testing::{Scripted, ScriptedTransport, completion};
-use pinakes::trail;
 
 fn fixture() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/golden")
@@ -38,7 +38,7 @@ fn grade_replays_distinct_queries_and_writes_query_id_grade_model_at() {
     let dir = tempfile::tempdir().unwrap();
     let trail_path = dir.path().join("trail.jsonl");
     std::fs::write(&trail_path, TRAIL).unwrap();
-    let entries = trail::read_jsonl(&trail_path).unwrap();
+    let entries = read_trail(&trail_path).unwrap();
     let queries = grade::distinct_queries(&entries);
     // The repeated "install" query collapses to one distinct query.
     assert_eq!(

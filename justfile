@@ -41,10 +41,11 @@ test:
 # Everything CI checks without the network: lint, then test.
 check: lint test
 
-# Refresh the pinned golden results and the report snapshots after an intended change (say why in the commit).
+# Refresh the pinned golden results, the report snapshots and the generated JSON Schemas after an intended change (say why in the commit).
 update-golden:
     UPDATE_GOLDEN=1 cargo test --test golden --test backend_tantivy_golden --test backend_dense_hybrid_golden
     UPDATE_SNAPSHOTS=1 cargo test
+    UPDATE_SCHEMAS=1 cargo test --test schemas
 
 # RustSec advisories against Cargo.lock (needs `cargo install cargo-audit`).
 audit:

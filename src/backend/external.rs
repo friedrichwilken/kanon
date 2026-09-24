@@ -3,30 +3,18 @@
 use std::path::Path;
 use std::time::Duration;
 
-use serde::Deserialize;
-
 use super::{Backend, BackendConfig, BackendError};
+use crate::contracts::{self, BACKEND_VERSION, SearchRequest, SearchResponse};
 use pinakes::index::{Hit, load_pages, mark_mirrors};
 
 /// External backend timeout.
 const EXTERNAL_TIMEOUT: Duration = Duration::from_secs(30);
 
-#[derive(Debug, Deserialize)]
-struct ExternalHit {
-    page_id: String,
-    score: f64,
-    #[serde(default)]
-    heading: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct ExternalResponse {
-    hits: Vec<ExternalHit>,
-}
-
-/// `external`: `POST {backend_url}/search` with `{"query", "k", "module"}`,
-/// expecting `{"hits": [{"page_id", "score", "heading"}]}`. Used to evaluate a store a
-/// consumer already runs; a failed request or a malformed response fails the whole `eval`.
+/// `external`: `POST {backend_url}/search` with a [`SearchRequest`], expecting a
+/// [`SearchResponse`] (the backend contract, `docs/manual/contracts.md`). Used to evaluate a
+/// store a consumer already runs; a failed request, a malformed response or a response of a
+/// newer contract version fails the whole `eval`. A hit's `unit_id` is parsed and, for now,
+/// not used: the [`Hit`] `eval` scores is the page.
 pub struct ExternalBackend {
     url: String,
     agent: ureq::Agent,
@@ -67,7 +55,12 @@ impl Backend for ExternalBackend {
         module: Option<&str>,
     ) -> Result<Vec<Hit>, BackendError> {
         let url = format!("{}/search", self.url.trim_end_matches('/'));
-        let body = serde_json::json!({ "query": query, "k": k, "module": module });
+        let body = SearchRequest {
+            version: BACKEND_VERSION,
+            query: query.to_string(),
+            k,
+            module: module.map(str::to_string),
+        };
         let response = self
             .agent
             .post(&url)
@@ -80,14 +73,19 @@ impl Backend for ExternalBackend {
                 url: url.clone(),
                 message: err.to_string(),
             })?;
-        let parsed: ExternalResponse =
-            response
-                .into_body()
-                .read_json()
-                .map_err(|err| BackendError::BadResponse {
-                    url: url.clone(),
-                    message: err.to_string(),
-                })?;
+        let bad_response = |message: String| BackendError::BadResponse {
+            url: url.clone(),
+            message,
+        };
+        let text = response
+            .into_body()
+            .read_to_string()
+            .map_err(|err| bad_response(err.to_string()))?;
+        let version =
+            contracts::document_version(&text).map_err(|err| bad_response(err.to_string()))?;
+        contracts::check_version(version, BACKEND_VERSION, &url)?;
+        let parsed: SearchResponse =
+            serde_json::from_str(&text).map_err(|err| bad_response(err.to_string()))?;
         Ok(parsed
             .hits
             .into_iter()
@@ -127,7 +125,12 @@ mod tests {
             assert!(request.starts_with("POST /search"), "{request}");
             assert!(request.contains("\"query\""), "{request}");
             assert!(request.contains("\"caching\""), "{request}");
-            let body = r#"{"hits":[{"page_id":"handbook::docs/user/README.md","score":1.5,"heading":"Upload caching"}]}"#;
+            let body_start = request.find("\r\n\r\n").unwrap() + 4;
+            let sent: SearchRequest = serde_json::from_str(&request[body_start..]).unwrap();
+            assert_eq!(sent.version, BACKEND_VERSION);
+            assert_eq!(sent.k, 5);
+            assert_eq!(sent.module, None);
+            let body = r#"{"version":1,"hits":[{"page_id":"handbook::docs/user/README.md","score":1.5,"heading":"Upload caching","unit_id":"handbook::docs/user/README.md#1"}]}"#;
             let response = format!(
                 "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
                 body.len(),
@@ -149,6 +152,42 @@ mod tests {
         assert!((hits[0].score - 1.5).abs() < 1e-12);
         assert_eq!(hits[0].heading, "Upload caching");
         handle.join().unwrap();
+    }
+
+    #[test]
+    fn external_backend_rejects_a_response_of_a_newer_version() {
+        use std::io::Write;
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let _request = read_http_request(&mut stream);
+            // A version 2 response that would not parse as version 1 either: the version is
+            // what gets reported.
+            let body = r#"{"version":2,"hits":[{"page":"handbook::docs/user/README.md"}]}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+
+        let (dir, _pages) = fixture_pages();
+        let config = BackendConfig {
+            backend_url: Some(format!("http://{addr}")),
+            ..BackendConfig::default()
+        };
+        let backend = ExternalBackend::build(dir.path(), &config).unwrap();
+        let err = backend.search("caching", 5, None).unwrap_err();
+        handle.join().unwrap();
+        assert!(matches!(&err, BackendError::Contract(_)), "{err}");
+        assert_eq!(
+            err.to_string(),
+            format!("http://{addr}/search: version 2 is newer than the version 1 this kanon reads")
+        );
     }
 
     #[test]

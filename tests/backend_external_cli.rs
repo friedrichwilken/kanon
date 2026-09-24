@@ -1,11 +1,14 @@
 //! `kanon eval --backend external --backend-url URL` end to end through the
-//! binary: a tiny in-process HTTP server stands in for a consumer's own search endpoint.
+//! binary: a tiny in-process HTTP server stands in for a consumer's own search endpoint and
+//! answers with a [`SearchResponse`] built from the contract types.
 
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
 use std::process::Command;
+
+use kanon::contracts::{BACKEND_VERSION, SearchHit, SearchRequest, SearchResponse};
 
 fn kanon(dir: &Path, args: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_kanon"))
@@ -18,7 +21,7 @@ fn kanon(dir: &Path, args: &[&str]) -> std::process::Output {
 }
 
 /// Answer one `POST /search` with a fixed hit, tolerating the `Expect: 100-continue` ureq sends
-/// with the request body.
+/// with the request body. The request body must be a [`SearchRequest`] of the current version.
 fn serve_one_search(listener: &TcpListener) {
     let (mut stream, _) = listener.accept().unwrap();
     let mut buf = Vec::new();
@@ -47,11 +50,24 @@ fn serve_one_search(listener: &TcpListener) {
             .and_then(|v| v.parse::<usize>().ok())
             .unwrap_or(0);
         if buf.len() - (header_end + 4) >= content_length {
+            let request: SearchRequest =
+                serde_json::from_slice(&buf[header_end + 4..]).expect("a SearchRequest body");
+            assert_eq!(request.version, BACKEND_VERSION);
+            assert_eq!(request.query, "enable upload caching");
+            assert_eq!(request.module, None);
             break;
         }
     }
-    let body =
-        r#"{"hits":[{"page_id":"handbook::docs/user/README.md","score":2.0,"heading":"Storage"}]}"#;
+    let body = serde_json::to_string(&SearchResponse {
+        version: BACKEND_VERSION,
+        hits: vec![SearchHit {
+            page_id: "handbook::docs/user/README.md".to_string(),
+            score: 2.0,
+            heading: "Storage".to_string(),
+            unit_id: Some("handbook::docs/user/README.md#0".to_string()),
+        }],
+    })
+    .unwrap();
     let response = format!(
         "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
         body.len(),

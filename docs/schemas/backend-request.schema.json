@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SearchRequest",
+  "description": "What `kanon` sends to `POST URL/search`.",
+  "type": "object",
+  "properties": {
+    "k": {
+      "description": "How many hits to return at most.",
+      "type": "integer",
+      "format": "uint",
+      "minimum": 0
+    },
+    "module": {
+      "description": "Restrict the search to one module (a source name), when given.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "query": {
+      "description": "The query text.",
+      "type": "string"
+    },
+    "version": {
+      "description": "Backend contract version; missing means 1.",
+      "type": "integer",
+      "format": "uint32",
+      "default": 1,
+      "minimum": 0
+    }
+  },
+  "required": [
+    "query",
+    "k"
+  ]
+}

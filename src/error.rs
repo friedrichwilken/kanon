@@ -5,11 +5,11 @@ use std::path::{Path, PathBuf};
 use pinakes::corpus::CorpusError;
 use pinakes::index::IndexError;
 use pinakes::manifest::ManifestError;
-use pinakes::trail::TrailError;
 use thiserror::Error;
 
 use crate::backend::BackendError;
 use crate::config::ConfigError;
+use crate::contracts::ContractError;
 use crate::embed::EmbedError;
 use crate::eval::EvalError;
 use crate::grade::GradeError;
@@ -62,9 +62,9 @@ pub enum CommandError {
     /// Building the model configuration failed (e.g. `KANON_LLM_URL` is not set).
     #[error(transparent)]
     Llm(#[from] LlmEnvError),
-    /// Bad or unreadable `trail.jsonl`.
+    /// Bad or unreadable `trail.jsonl`, or a contract document newer than this kanon reads.
     #[error(transparent)]
-    Trail(#[from] TrailError),
+    Contract(#[from] ContractError),
     /// `grade` failed, including talking to the model or the backend.
     #[error(transparent)]
     Grade(#[from] GradeError),

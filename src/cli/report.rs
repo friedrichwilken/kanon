@@ -15,7 +15,8 @@ pub(crate) struct ReportArgs {
     /// Eval JSON for the current corpus or retriever.
     #[arg(long, value_name = "EVAL")]
     eval_after: Option<PathBuf>,
-    /// Run directory written by `eval --out`; adds a History section, one row per run.
+    /// Run directory written by `eval --out` (relative to the current directory); adds a
+    /// History section, one row per run.
     #[arg(long, value_name = "DIR")]
     runs: Option<PathBuf>,
 }

@@ -37,8 +37,9 @@ Each one reads and writes plain files. None needs the others at runtime.
 ## Status
 
 Pre-release. The evaluation commands (`eval`, `embed`, `grade`, `queries`, `report`) have
-moved here out of `pinakes`, where they started, with the same flags and file formats; see
-the [issues](https://github.com/friedrichwilken/kanon/issues) for what comes next.
+moved here out of `pinakes`, where they started, with the same flags and file formats;
+`history` is new here. See the [issues](https://github.com/friedrichwilken/kanon/issues) for
+what comes next.
 
 ## Quick start
 

@@ -97,19 +97,19 @@ impl Run {
     }
 }
 
-/// Keep `[A-Za-z0-9_.-]`; every other character becomes `-`. An empty label becomes
-/// [`FALLBACK_LABEL`], so the file name always has one.
+/// Keep `[A-Za-z0-9_.-]`; every other character becomes `-`, runs of `-` collapse to one and
+/// leading or trailing dashes go. An empty label becomes [`FALLBACK_LABEL`], so the file name
+/// always has one.
 pub fn sanitise_label(label: &str) -> String {
-    let clean: String = label
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-') {
-                c
-            } else {
-                '-'
-            }
-        })
-        .collect();
+    let mut clean = String::with_capacity(label.len());
+    for c in label.chars() {
+        if c.is_ascii_alphanumeric() || matches!(c, '_' | '.') {
+            clean.push(c);
+        } else if !clean.ends_with('-') {
+            clean.push('-');
+        }
+    }
+    let clean = clean.trim_matches('-').to_string();
     if clean.is_empty() {
         FALLBACK_LABEL.to_string()
     } else {
@@ -192,6 +192,8 @@ pub fn run_file_name(seq: u32, label: &str) -> String {
 
 /// Write `run` as the next numbered file in `dir` (created when missing), named after
 /// `run.run.label` (or [`FALLBACK_LABEL`] without a [`RunInfo`]). Returns the path written.
+/// The file is created new, so two `eval --out` into the same directory at once fail on the
+/// collision instead of one overwriting the other.
 pub fn write_run(dir: &Path, run: &Run) -> Result<PathBuf, HistoryError> {
     std::fs::create_dir_all(dir).map_err(io(dir))?;
     let label = run
@@ -203,7 +205,12 @@ pub fn write_run(dir: &Path, run: &Run) -> Result<PathBuf, HistoryError> {
         path: path.clone(),
         source,
     })?;
-    std::fs::write(&path, text).map_err(io(&path))?;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .and_then(|mut file| std::io::Write::write_all(&mut file, text.as_bytes()))
+        .map_err(io(&path))?;
     Ok(path)
 }
 
@@ -381,10 +388,74 @@ mod tests {
 
     #[test]
     fn labels_keep_only_safe_characters() {
-        assert_eq!(sanitise_label("abc12_.-"), "abc12_.-");
-        assert_eq!(sanitise_label("my label/v2 ü"), "my-label-v2--");
+        assert_eq!(sanitise_label("abc12_.-x"), "abc12_.-x");
+        assert_eq!(sanitise_label("my label/v2 ü"), "my-label-v2");
+        assert_eq!(sanitise_label("--a---b--"), "a-b");
         assert_eq!(sanitise_label(""), FALLBACK_LABEL);
+        assert_eq!(sanitise_label("///"), FALLBACK_LABEL);
         assert_eq!(run_label(Some("x y"), Path::new("")), "x-y");
+    }
+
+    /// `--label` wins, then the git short SHA of the config's repository, then `run`. The git
+    /// half runs only when a `git` is on the path, so the test never depends on the runner.
+    #[test]
+    fn label_falls_back_to_the_git_short_sha_then_to_run() {
+        let plain = tempfile::tempdir().unwrap();
+        assert_eq!(run_label(Some("given"), plain.path()), "given");
+
+        let git = |dir: &Path, args: &[&str]| {
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+                .args(["-c", "commit.gpgsign=false"])
+                .args(args)
+                .output()
+        };
+        let Ok(version) = std::process::Command::new("git").arg("--version").output() else {
+            return;
+        };
+        if !version.status.success() {
+            return;
+        }
+
+        // A repository with no commits has no HEAD to resolve.
+        let repo = tempfile::tempdir().unwrap();
+        assert!(git(repo.path(), &["init", "-q"]).unwrap().status.success());
+        assert_eq!(git_short_sha(repo.path()), None);
+        assert_eq!(run_label(None, repo.path()), FALLBACK_LABEL);
+
+        fs::write(repo.path().join("kanon.yaml"), "queries: q.jsonl\n").unwrap();
+        assert!(git(repo.path(), &["add", "."]).unwrap().status.success());
+        assert!(
+            git(repo.path(), &["commit", "-q", "-m", "init"])
+                .unwrap()
+                .status
+                .success()
+        );
+        let expected = git(repo.path(), &["rev-parse", "--short", "HEAD"]).unwrap();
+        let expected = String::from_utf8(expected.stdout).unwrap();
+        let expected = expected.trim();
+        assert!(!expected.is_empty());
+        assert_eq!(git_short_sha(repo.path()).as_deref(), Some(expected));
+        assert_eq!(run_label(None, repo.path()), expected);
+        assert_eq!(run_label(Some("given"), repo.path()), "given");
+    }
+
+    #[test]
+    fn a_plain_tempdir_is_not_a_repository() {
+        // A temporary directory outside any repository (the usual case) resolves no SHA. The
+        // assertion is skipped when the temp root happens to sit inside one.
+        let dir = tempfile::tempdir().unwrap();
+        let inside_repo = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir.path())
+            .args(["rev-parse", "--is-inside-work-tree"])
+            .output()
+            .is_ok_and(|o| o.status.success());
+        if !inside_repo {
+            assert_eq!(run_label(None, dir.path()), FALLBACK_LABEL);
+        }
     }
 
     #[test]

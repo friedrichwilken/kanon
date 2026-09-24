@@ -51,8 +51,9 @@ pub(crate) struct EvalArgs {
     /// (with `--json`) one combined result file.
     #[arg(long, value_name = "NAME,NAME,…", value_delimiter = ',')]
     compare: Vec<String>,
-    /// Also write the result as the next numbered run file, `DIR/NNN-<label>.json`, with the
-    /// backend, manifest hash, query-set hash and time inside (`kanon history` reads them).
+    /// Also write the result as the next numbered run file, `DIR/NNN-<label>.json` (relative
+    /// to the current directory), with the backend, manifest hash, query-set hash and time
+    /// inside (`kanon history` reads them).
     #[arg(long, value_name = "DIR")]
     out: Option<PathBuf>,
     /// The run file's label (default: the git short SHA of the config's repository, else

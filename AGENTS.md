@@ -29,11 +29,13 @@ belongs in git: a query set, a run, a gate, a report.
 **Measuring:** `eval` (the judge, the metrics, the result file); `embed` (the embeddings file
 pair and the `Embedder` trait); `backend` (the `Backend` trait and `bm25`, `tantivy`, `dense`,
 `hybrid`, `external`); `grade` (replay a trail, ask the model); `queries` (grow and validate
-the judge); `report` (the evaluation sections of a Markdown report).
+the judge); `report` (the evaluation sections of a Markdown report); `history` (the numbered
+run files `eval --out` writes and the rows `history` reads back).
 
-**Commands:** `error` (`CommandError`), `commands` (one file per subcommand: options, outcome,
-implementation, plus `settings`, what every command reads first). The binary's `src/cli/` is
-arguments, dispatch and printing only.
+**Commands:** `error` (`CommandError`), `commands` (one file per subcommand: `eval`, `embed`,
+`grade`, `queries`, `report`, `history`; options, outcome, implementation, plus `settings`,
+what every command reads first). The binary's `src/cli/` is arguments, dispatch and printing
+only.
 
 ## Rules
 

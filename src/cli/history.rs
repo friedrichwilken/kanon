@@ -10,7 +10,8 @@ use kanon::history;
 
 #[derive(Args)]
 pub(crate) struct HistoryArgs {
-    /// Run directory written by `eval --out` (default: `runs` next to the config).
+    /// Run directory written by `eval --out`, relative to the current directory (default:
+    /// `runs` next to the config).
     #[arg(long, value_name = "DIR")]
     runs: Option<PathBuf>,
     /// Write the rows as JSON to this file instead of printing the table.

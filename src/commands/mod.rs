@@ -26,8 +26,9 @@ pub use eval::{
 pub use grade::{GradeOptions, GradeOutcome, grade};
 pub use history::{DEFAULT_RUNS_DIR, HistoryOptions, HistoryOutcome, history};
 pub use queries::{
-    QueriesAddOptions, QueriesImportOptions, QueriesImportOutcome, queries_add, queries_check,
-    queries_import,
+    QueriesAcceptOptions, QueriesAddOptions, QueriesImportOptions, QueriesImportOutcome,
+    QueriesSuggestOptions, QueriesSuggestOutcome, queries_accept, queries_add, queries_check,
+    queries_import, queries_suggest,
 };
 pub use report::{ReportOptions, report};
 

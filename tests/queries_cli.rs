@@ -1,5 +1,7 @@
-//! `kanon queries add` and `kanon queries check` end to end through the binary: appending
-//! rows, rejecting unknown expected ids, and exit 4 on a `check` failure.
+//! `kanon queries add`, `queries check` and `queries suggest` end to end through the binary:
+//! appending rows, rejecting unknown expected ids, accepting suggestions, exit 4 on a `check`
+//! failure, and the one-line explanation `suggest` prints without a model endpoint (the model
+//! itself is scripted in the library's own tests, which a spawned binary cannot do).
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -215,4 +217,125 @@ fn check_exits_4_on_an_unmet_holdout_share_and_0_once_it_is_met() {
     let out = kanon(root, "nonexistent.yaml", &["queries", "check"]);
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains("no query file"));
+}
+
+#[test]
+fn add_from_accepts_suggestions_and_keeps_their_origin() {
+    let dir = workspace();
+    let root = dir.path();
+    fs::write(
+        root.join("suggestions.jsonl"),
+        "{\"id\": \"what-is-a-1\", \"query\": \"what is a\", \"expected\": [\"handbook::docs/a.md\"], \
+         \"kind\": \"concept\", \"origin\": \"suggested\", \"page_title\": \"A\"}\n\
+         {\"id\": \"what-is-b-2\", \"query\": \"what is b\", \"expected\": [\"handbook::docs/b.md\"], \
+         \"kind\": \"concept\", \"origin\": \"suggested\", \"page_title\": \"B\"}\n",
+    )
+    .unwrap();
+
+    let out = kanon(
+        root,
+        "nonexistent.yaml",
+        &[
+            "queries",
+            "add",
+            "--from",
+            "suggestions.jsonl",
+            "--accept",
+            "what-is-b-2",
+            "--queries",
+            "queries.jsonl",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("accepted 1 suggestions"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = fs::read_to_string(root.join("queries.jsonl")).unwrap();
+    assert_eq!(text.lines().count(), 1);
+    let row: serde_json::Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
+    assert_eq!(row["id"], "what-is-b-2");
+    assert_eq!(row["origin"], "suggested");
+    assert!(row.get("page_title").is_none(), "{row}");
+
+    // An id that is not in the file exits 1 and appends nothing.
+    let out = kanon(
+        root,
+        "nonexistent.yaml",
+        &[
+            "queries",
+            "add",
+            "--from",
+            "suggestions.jsonl",
+            "--accept",
+            "nope",
+            "--queries",
+            "queries.jsonl",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("names no row in the suggestions file"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("queries.jsonl"))
+            .unwrap()
+            .lines()
+            .count(),
+        1
+    );
+
+    // --from is exclusive with --id/--query/--expected and needs a selection; a plain add
+    // still needs all three.
+    let out = kanon(
+        root,
+        "nonexistent.yaml",
+        &[
+            "queries",
+            "add",
+            "--from",
+            "suggestions.jsonl",
+            "--accept-all",
+            "--id",
+            "x",
+            "--queries",
+            "queries.jsonl",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(2), "clap usage error");
+    let out = kanon(
+        root,
+        "nonexistent.yaml",
+        &["queries", "add", "--from", "suggestions.jsonl"],
+    );
+    assert_eq!(out.status.code(), Some(2), "clap usage error");
+    let out = kanon(root, "nonexistent.yaml", &["queries", "add", "--id", "x"]);
+    assert_eq!(out.status.code(), Some(2), "clap usage error");
+}
+
+#[test]
+fn suggest_explains_the_missing_endpoint_and_exits_1() {
+    let dir = workspace();
+    let out = Command::new(env!("CARGO_BIN_EXE_kanon"))
+        .current_dir(dir.path())
+        .env_remove("KANON_LLM_URL")
+        .env_remove("PINAKES_LLM_URL")
+        .args(["--config", "nonexistent.yaml", "queries", "suggest"])
+        .output()
+        .expect("kanon runs");
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("KANON_LLM_URL is not set") && stderr.contains("queries suggest"),
+        "{stderr}"
+    );
+    assert!(out.stdout.is_empty());
+    assert!(!dir.path().join("suggestions.jsonl").exists());
 }

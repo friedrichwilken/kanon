@@ -137,7 +137,9 @@ pub struct SearchResponse {
 pub struct SearchHit {
     /// `<source>::<path>` of the page.
     pub page_id: String,
-    /// The backend's score; only the order matters to `kanon`.
+    /// The backend's score. `kanon` ranks by the order of the hits; the first hit's score is
+    /// recorded as the result's `top_score` and decides a negative query against
+    /// `--negative-threshold`.
     pub score: f64,
     /// Heading of the section that matched, empty for the page's intro.
     #[serde(default)]

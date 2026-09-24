@@ -357,8 +357,12 @@ impl QueryResult {
 /// The relevance of each page in `top` and, sorted best first, the row's ideal gains.
 ///
 /// The keys are `graded` with their grades, or `expected` with grade 1 when the row has no
-/// grades. Every key counts once: a page takes the highest grade among the keys it matches that
-/// no earlier page has taken (the first such key in file order on a tie), else 0.
+/// grades. A page takes the most specific key that matches it: its own id first, else the
+/// longest directory prefix (the longer key on a tie, then the first in key order), and it takes
+/// that key's grade even when it is 0. A key graded above 0 counts once, at the first page that
+/// takes it; a later page under a taken prefix falls back to the next less specific key that is
+/// still free, else 0. A key graded 0 is never used up, so every page it names stays at 0, even
+/// under a graded directory.
 fn relevance(query: &Query, top: &[String]) -> (Vec<u8>, Vec<u8>) {
     let keys: Vec<(&str, u8)> = if query.graded.is_empty() {
         query.expected.iter().map(|key| (key.as_str(), 1)).collect()
@@ -369,18 +373,28 @@ fn relevance(query: &Query, top: &[String]) -> (Vec<u8>, Vec<u8>) {
             .map(|(key, grade)| (key.as_str(), *grade))
             .collect()
     };
+    let path = |id: &str| id.replacen("::", "/", 1);
     let mut taken = vec![false; keys.len()];
     let rels = top
         .iter()
         .map(|page| {
-            let best = keys
+            // The keys that match this page, most specific first.
+            let mut candidates: Vec<(usize, bool)> = keys
                 .iter()
                 .enumerate()
-                .filter(|(i, (key, grade))| !taken[*i] && *grade > 0 && matches(page, key))
-                .max_by_key(|(i, (_, grade))| (*grade, Reverse(*i)));
-            best.map_or(0, |(i, (_, grade))| {
+                .filter(|(_, (key, _))| matches(page, key))
+                .map(|(i, (key, _))| (i, path(page) == path(key).trim_end_matches('/')))
+                .collect();
+            candidates.sort_by(|&(a, a_exact), &(b, b_exact)| {
+                b_exact
+                    .cmp(&a_exact)
+                    .then(keys[b].0.len().cmp(&keys[a].0.len()))
+                    .then(keys[a].0.cmp(keys[b].0))
+            });
+            let free = |&&(i, _): &&(usize, bool)| keys[i].1 == 0 || !taken[i];
+            candidates.iter().find(free).map_or(0, |&(i, _)| {
                 taken[i] = true;
-                *grade
+                keys[i].1
             })
         })
         .collect();
@@ -507,6 +521,9 @@ pub struct Gate {
     pub current: f64,
     /// Largest tolerated drop (`max_recall_drop`).
     pub max_drop: f64,
+    /// The baseline has queries but its value for the metric is exactly 0: most likely a
+    /// result written before the metric existed, which reads as 0 and would pass silently.
+    pub baseline_unset: bool,
 }
 
 impl Gate {
@@ -521,18 +538,21 @@ impl Gate {
     }
 }
 
-/// Compare the tuning `metric` of `current` with `baseline`.
+/// Compare the tuning `metric` of `current` with `baseline`. [`Gate::baseline_unset`] flags a
+/// baseline that has queries but no value for the metric (see there).
 pub fn gate(
     current: &EvalSummary,
     baseline: &EvalSummary,
     max_drop: f64,
     metric: GateMetric,
 ) -> Gate {
+    let baseline_value = baseline.tuning.overall.get(metric);
     Gate {
         metric,
-        baseline: baseline.tuning.overall.get(metric),
+        baseline: baseline_value,
         current: current.tuning.overall.get(metric),
         max_drop,
+        baseline_unset: baseline.tuning.overall.n > 0 && baseline_value == 0.0,
     }
 }
 
@@ -625,9 +645,15 @@ pub fn render_table(summary: &EvalSummary) -> String {
         "| split | kind | n | recall@5 | recall@10 | MRR | nDCG@5 | nDCG@10 |\n\
          |---|---|---|---|---|---|---|---|\n",
     );
-    table_rows(&mut out, "tuning", &summary.tuning);
+    // A split of negative queries alone has no metric to show; its line below says it all.
+    let rows = |out: &mut String, label: &str, split: &Split| {
+        if split.overall.n > 0 || split.negative.is_none() {
+            table_rows(out, label, split);
+        }
+    };
+    rows(&mut out, "tuning", &summary.tuning);
     if let Some(holdout) = &summary.holdout {
-        table_rows(&mut out, "held-out", holdout);
+        rows(&mut out, "held-out", holdout);
     }
     if let Some(negative) = &summary.tuning.negative {
         negative_line(&mut out, "tuning", negative);
@@ -913,6 +939,37 @@ mod tests {
             row.ndcg5
         );
 
+        // Two keys at the same grade: the page takes its own id, the next page the directory.
+        let query = graded_query(&["s::docs/"], &[("s::docs/", 2), ("s::docs/x.md", 2)]);
+        let row = QueryResult::score(&query, ids(&["s::docs/x.md", "s::docs/y.md"]), None, 10);
+        assert_eq!(row.rels, [2, 2]);
+        assert!((row.ndcg5 - 1.0).abs() < 1e-12, "{}", row.ndcg5);
+
+        // An explicit 0 under a graded directory holds, for a page or a subdirectory, and is
+        // never used up; the directory's gain goes to the first page not graded 0.
+        let query = graded_query(&["s::docs/"], &[("s::docs/", 2), ("s::docs/bad.md", 0)]);
+        let row = QueryResult::score(&query, ids(&["s::docs/bad.md", "s::docs/y.md"]), None, 10);
+        assert_eq!(row.rels, [0, 2]);
+        assert!((row.ndcg5 - 1.0 / log2(3.0)).abs() < 1e-12, "{}", row.ndcg5);
+        let query = graded_query(&["s::docs/"], &[("s::docs/", 2), ("s::docs/old/", 0)]);
+        let row = QueryResult::score(
+            &query,
+            ids(&["s::docs/old/a.md", "s::docs/old/b.md", "s::docs/y.md"]),
+            None,
+            10,
+        );
+        assert_eq!(row.rels, [0, 0, 2]);
+
+        // A taken specific prefix falls back to the wider one, which then counts once.
+        let query = graded_query(&["s::docs/"], &[("s::docs/", 2), ("s::docs/sub/", 3)]);
+        let row = QueryResult::score(
+            &query,
+            ids(&["s::docs/sub/a.md", "s::docs/sub/b.md", "s::docs/c.md"]),
+            None,
+            10,
+        );
+        assert_eq!(row.rels, [3, 2, 0]);
+
         // With grades, an `expected` entry that has no grade carries no gain.
         let query = graded_query(&["s::a.md", "s::b.md"], &[("s::a.md", 2)]);
         let row = QueryResult::score(&query, ids(&["s::b.md", "s::a.md"]), None, 10);
@@ -997,6 +1054,11 @@ mod tests {
             "{table}"
         );
         assert!(!table.contains("| tuning | negative |"), "{table}");
+        assert!(
+            !table.contains("| held-out |"),
+            "a split of negative rows alone shows no zero metric rows: {table}"
+        );
+        assert!(table.contains("| tuning | overall | 1 |"), "{table}");
 
         // With a threshold, a top score under it rejects too.
         let summary = summarise(rows, Some(0.5));
@@ -1189,6 +1251,18 @@ mod tests {
         current.holdout = Some(Split::of(&[], None));
         current.tuning.overall.recall5 = 1.0;
         assert!(gate(&current, &baseline, 0.0, GateMetric::Recall5).passed());
+
+        // A baseline written before nDCG existed reads the metric as 0 and is flagged; a
+        // baseline with no queries at all is not, nor is a metric the baseline carries.
+        assert!(!gate(&current, &baseline, 0.0, GateMetric::Ndcg5).baseline_unset);
+        let legacy: EvalSummary = serde_json::from_str(
+            r#"{"tuning":{"overall":{"recall@5":1.0,"recall@10":1.0,"mrr":1.0,"n":3}}}"#,
+        )
+        .unwrap();
+        let g = gate(&current, &legacy, 0.0, GateMetric::Ndcg10);
+        assert!(g.baseline_unset && g.passed(), "{g:?}");
+        assert!(!gate(&current, &legacy, 0.0, GateMetric::Recall5).baseline_unset);
+        assert!(!gate(&current, &summarise(vec![], None), 0.0, GateMetric::Ndcg5).baseline_unset);
 
         // Another metric reads its own column and leaves recall alone.
         current.tuning.overall.ndcg5 = 0.7;

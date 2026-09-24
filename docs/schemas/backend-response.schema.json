@@ -37,7 +37,7 @@
           "type": "string"
         },
         "score": {
-          "description": "The backend's score; only the order matters to `kanon`.",
+          "description": "The backend's score. `kanon` ranks by the order of the hits; the first hit's score is\nrecorded as the result's `top_score` and decides a negative query against\n`--negative-threshold`.",
           "type": "number",
           "format": "double"
         },

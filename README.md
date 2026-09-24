@@ -66,8 +66,10 @@ A `kanon.yaml` next to the artifact fixes what a bare `kanon eval` measures; a `
 with an `eval:` block works as before. `eval --json baseline.json` records a run,
 `eval --gate baseline.json` exits 2 when the gated tuning metric drops by more than
 `max_recall_drop` (recall@5 unless `--gate-metric` or the config's `gate_metric` names
-`recall10`, `mrr`, `ndcg5` or `ndcg10`; the tolerance applies to whichever metric is gated),
-and `eval --compare bm25,bm25-tantivy,dense,hybrid,external` scores several retrievers over
+`recall10`, `mrr`, `ndcg5` or `ndcg10`; the tolerance applies to whichever metric is gated;
+a baseline written before nDCG existed has no value for it, so gating on `ndcg5` or `ndcg10`
+against one warns and compares against 0 until the baseline is re-recorded), and
+`eval --compare bm25,bm25-tantivy,dense,hybrid,external` scores several retrievers over
 the same query set. `grade --backend NAME` takes the same backend flags and config defaults,
 so a trail from a served retriever is graded on the candidates that retriever returns. Model
 endpoints come from `KANON_EMBED_URL` and `KANON_LLM_URL` (the `PINAKES_*` names still
@@ -85,8 +87,10 @@ A row without `graded` scores every expected page at 1, so nDCG is still there, 
 `kind: "negative"` and an empty `expected` says the corpus does not answer the query. `eval`
 keeps those rows out of every average and reports instead how many the retriever rejected: no
 hit at all, or, with `--negative-threshold` (config `negative_threshold`), a top score under
-it. `queries check` accepts an empty `expected` only on such a row, and fails on a grade above
-3 or a `graded` key that names no page.
+it. `queries add --kind negative` appends one without `--expected`. `queries check` accepts an
+empty `expected` only on such a row (it used to accept one on any row; every other kind now
+exits 4), and fails on a negative row that names pages, a grade above 3 or a `graded` key that
+names no page.
 
 `eval --out runs/` also writes the result as `runs/NNN-<label>.json`, numbered after the last
 run in the directory and labelled with `--label` or the git short SHA, with the backend, the

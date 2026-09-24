@@ -145,6 +145,7 @@ fn run_eval_plain(paths: &Paths, options: &EvalOptions) -> Result<ExitCode> {
         eprintln!("wrote {}", path.display());
     }
     if let Some(gate) = outcome.gate {
+        warn_unset_baseline(&gate);
         let verdict = if gate.passed() { "ok" } else { "FAILED" };
         eprintln!(
             "gate: tuning {} {:.3} → {:.3}, drop {:+.3}, max {:.3}: {verdict}",
@@ -263,7 +264,20 @@ fn print_eval_outcome(
     }
 }
 
+/// A baseline with queries but a zero for the gated metric was almost certainly written before
+/// that metric existed; say so, since the gate would otherwise pass against 0 without a word.
+fn warn_unset_baseline(gate: &eval::Gate) {
+    if gate.baseline_unset {
+        eprintln!(
+            "warning: the baseline has no {} (written before the metric existed?); the gate \
+             compares against 0.000, re-record the baseline to gate on it",
+            gate.metric.label()
+        );
+    }
+}
+
 fn print_gate(backend: BackendKind, gate: &eval::Gate) {
+    warn_unset_baseline(gate);
     let verdict = if gate.passed() { "ok" } else { "FAILED" };
     eprintln!(
         "gate [{backend}]: tuning {} {:.3} → {:.3}, drop {:+.3}, max {:.3}: {verdict}",

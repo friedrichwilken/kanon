@@ -159,12 +159,16 @@ fn jsonl_error(err: JsonlError) -> QueriesError {
 /// The outcome of `queries check`; exit 4 when [`CheckReport::ok`] is false.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct CheckReport {
-    /// `(query id, expected or graded entry)` pairs that match no page in the manifest.
+    /// `(query id, expected entry)` pairs that match no page in the manifest.
     pub unknown: Vec<(String, String)>,
+    /// `(query id, graded entry)` pairs that match no page in the manifest.
+    pub unknown_graded: Vec<(String, String)>,
     /// `(query id, graded entry, grade)` triples whose grade is above [`MAX_GRADE`].
     pub bad_grade: Vec<(String, String, u8)>,
     /// Ids of rows with an empty `expected` list that are not negative queries.
     pub empty_expected: Vec<String>,
+    /// Ids of negative queries that name expected pages (a negative row must have none).
+    pub negative_with_expected: Vec<String>,
     /// Query ids that appear more than once.
     pub duplicate_ids: Vec<String>,
     /// Held-out fraction of all queries (`0.0` when there are none).
@@ -177,8 +181,10 @@ impl CheckReport {
     /// Whether the query set passes every check.
     pub fn ok(&self) -> bool {
         self.unknown.is_empty()
+            && self.unknown_graded.is_empty()
             && self.bad_grade.is_empty()
             && self.empty_expected.is_empty()
+            && self.negative_with_expected.is_empty()
             && self.duplicate_ids.is_empty()
             && self.holdout_share >= self.holdout_min
     }
@@ -193,12 +199,15 @@ fn share(count: usize, total: usize) -> f64 {
 }
 
 /// Validate `queries` against `manifest`: unknown expected and graded ids, grades above
-/// [`MAX_GRADE`], an empty `expected` on a row that is not a negative query, duplicate query
-/// ids, and the held-out share against `holdout_min`.
+/// [`MAX_GRADE`], an empty `expected` on a row that is not a negative query, a negative query
+/// that names expected pages, duplicate query ids, and the held-out share against
+/// `holdout_min`.
 pub fn check(queries: &[Query], manifest: &Manifest, holdout_min: f64) -> CheckReport {
     let mut unknown = Vec::new();
+    let mut unknown_graded = Vec::new();
     let mut bad_grade = Vec::new();
     let mut empty_expected = Vec::new();
+    let mut negative_with_expected = Vec::new();
     for query in queries {
         let known = |entry: &str| manifest.pages().any(|(id, ..)| eval::matches(&id, entry));
         for expected in &query.expected {
@@ -208,14 +217,16 @@ pub fn check(queries: &[Query], manifest: &Manifest, holdout_min: f64) -> CheckR
         }
         for (entry, grade) in &query.graded {
             if !known(entry) {
-                unknown.push((query.id.clone(), entry.clone()));
+                unknown_graded.push((query.id.clone(), entry.clone()));
             }
             if *grade > MAX_GRADE {
                 bad_grade.push((query.id.clone(), entry.clone(), *grade));
             }
         }
-        if query.expected.is_empty() && !query.is_negative() {
-            empty_expected.push(query.id.clone());
+        match (query.is_negative(), query.expected.is_empty()) {
+            (false, true) => empty_expected.push(query.id.clone()),
+            (true, false) => negative_with_expected.push(query.id.clone()),
+            _ => {}
         }
     }
     let mut counts = std::collections::BTreeMap::new();
@@ -230,8 +241,10 @@ pub fn check(queries: &[Query], manifest: &Manifest, holdout_min: f64) -> CheckR
     let holdout_share = share(queries.iter().filter(|q| q.holdout).count(), queries.len());
     CheckReport {
         unknown,
+        unknown_graded,
         bad_grade,
         empty_expected,
+        negative_with_expected,
         duplicate_ids,
         holdout_share,
         holdout_min,
@@ -538,10 +551,19 @@ mod tests {
         let report = check(&queries, &m, 0.0);
         assert!(!report.ok());
         assert_eq!(report.empty_expected, ["empty"]);
+        assert!(report.negative_with_expected.is_empty());
         assert!(report.unknown.is_empty() && report.bad_grade.is_empty());
         // The negative row alone passes.
         let report = check(&queries[..2], &m, 0.0);
         assert!(report.ok(), "{report:?}");
+
+        // The mirror rule: a negative row that names expected pages fails too.
+        let mut contradiction = query("both", &["handbook::docs/user/quotas.md"], false);
+        contradiction.kind = eval::NEGATIVE_KIND.to_string();
+        let report = check(&[contradiction], &m, 0.0);
+        assert!(!report.ok());
+        assert_eq!(report.negative_with_expected, ["both"]);
+        assert!(report.empty_expected.is_empty() && report.unknown.is_empty());
     }
 
     #[test]
@@ -562,8 +584,9 @@ mod tests {
             .insert("handbook::docs/user/quotas.md".to_string(), 4);
         let report = check(std::slice::from_ref(&graded), &m, 0.0);
         assert!(!report.ok());
+        assert!(report.unknown.is_empty(), "expected ids are all known");
         assert_eq!(
-            report.unknown,
+            report.unknown_graded,
             [("caching".to_string(), "handbook::missing.md".to_string())]
         );
         assert_eq!(

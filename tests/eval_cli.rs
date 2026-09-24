@@ -213,6 +213,71 @@ fn eval_reports_ndcg_columns_and_the_negative_share() {
     );
 }
 
+/// A baseline written before nDCG existed reads as 0 for it: the gate passes, with a warning
+/// that names the metric, and the tagged backend path prints the same warning.
+#[test]
+fn eval_gate_warns_when_the_baseline_lacks_the_metric() {
+    let dir = graded_workspace();
+    let root = dir.path();
+    let out = kanon(
+        root,
+        &[
+            "eval",
+            "--queries",
+            "queries.jsonl",
+            "--json",
+            "baseline.json",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let mut old: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(root.join("baseline.json")).unwrap()).unwrap();
+    let overall = old["tuning"]["overall"].as_object_mut().unwrap();
+    overall.remove("ndcg@5");
+    overall.remove("ndcg@10");
+    fs::write(root.join("old.json"), old.to_string()).unwrap();
+
+    let gate = |extra: &[&str]| {
+        let mut args = vec!["eval", "--queries", "queries.jsonl", "--gate", "old.json"];
+        args.extend_from_slice(extra);
+        kanon(root, &args)
+    };
+    let out = gate(&["--gate-metric", "ndcg5"]);
+    assert!(out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("warning: the baseline has no nDCG@5"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("gate: tuning nDCG@5 0.000 → 1.000"),
+        "{stderr}"
+    );
+    let out = gate(&["--gate-metric", "ndcg5", "--backend", "bm25"]);
+    assert!(out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("warning: the baseline has no nDCG@5"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("gate [bm25]: tuning nDCG@5 0.000"),
+        "{stderr}"
+    );
+    // A metric the old baseline does carry is not flagged.
+    let out = gate(&["--gate-metric", "recall5"]);
+    assert!(out.status.success());
+    assert!(
+        !String::from_utf8_lossy(&out.stderr).contains("warning"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 /// `--gate-metric` (or `gate_metric` in the config) names the tuning metric the gate compares;
 /// the flag wins over the config and an unknown name is a usage error.
 #[test]

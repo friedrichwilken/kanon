@@ -62,7 +62,9 @@ fn eval_section(out: &mut String, before: Option<&EvalSummary>, after: Option<&E
 }
 
 fn eval_table(out: &mut String, before: Option<&Split>, after: Option<&Split>) {
-    out.push_str("| kind | recall@5 | recall@10 | MRR | n |\n|---|---|---|---|---|\n");
+    out.push_str(
+        "| kind | recall@5 | recall@10 | MRR | nDCG@5 | nDCG@10 | n |\n|---|---|---|---|---|---|---|\n",
+    );
     let mut kinds: BTreeSet<&str> = BTreeSet::new();
     for split in [before, after].into_iter().flatten() {
         kinds.extend(split.per_kind.keys().map(String::as_str));
@@ -96,10 +98,12 @@ fn eval_row(out: &mut String, label: &str, before: Option<&Metrics>, after: Opti
         .map_or_else(|| "–".to_string(), |m| m.n.to_string());
     let _ = writeln!(
         out,
-        "| {label} | {} | {} | {} | {n} |",
+        "| {label} | {} | {} | {} | {} | {} | {n} |",
         cell(|m| m.recall5),
         cell(|m| m.recall10),
-        cell(|m| m.mrr)
+        cell(|m| m.mrr),
+        cell(|m| m.ndcg5),
+        cell(|m| m.ndcg10)
     );
 }
 
@@ -110,11 +114,15 @@ mod tests {
 
     use super::*;
 
+    /// Metrics with nDCG@5 and nDCG@10 derived from MRR (`mrr - 0.02`, `mrr + 0.02`), so the
+    /// snapshots show every column with a distinct number.
     fn metrics(r5: f64, r10: f64, mrr: f64, n: usize) -> Metrics {
         Metrics {
             recall5: r5,
             recall10: r10,
             mrr,
+            ndcg5: mrr - 0.02,
+            ndcg10: mrr + 0.02,
             n,
         }
     }
@@ -124,10 +132,12 @@ mod tests {
             tuning: Split {
                 overall: metrics(0.8, 0.85, 0.66, 40),
                 per_kind: BTreeMap::from([("howto".to_string(), metrics(0.9, 0.95, 0.8, 10))]),
+                negative: None,
             },
             holdout: Some(Split {
                 overall: metrics(0.7, 0.8, 0.6, 10),
                 per_kind: BTreeMap::new(),
+                negative: None,
             }),
             queries: vec![],
             backend: String::new(),
@@ -139,10 +149,12 @@ mod tests {
                     ("concept".to_string(), metrics(0.7, 0.7, 0.5, 5)),
                     ("howto".to_string(), metrics(0.9, 1.0, 0.85, 10)),
                 ]),
+                negative: None,
             },
             holdout: Some(Split {
                 overall: metrics(0.75, 0.8, 0.65, 10),
                 per_kind: BTreeMap::new(),
+                negative: None,
             }),
             queries: vec![],
             backend: "bm25".to_string(),
@@ -176,8 +188,13 @@ mod tests {
             after: Some(&after),
             history: None,
         });
-        assert!(text.contains("| overall | 0.800 → 0.850 | 0.850 → 0.900 | 0.660 → 0.700 | 40 |"));
-        assert!(text.contains("| concept | – → 0.700 | – → 0.700 | – → 0.500 | 5 |"));
+        assert!(text.contains(
+            "| overall | 0.800 → 0.850 | 0.850 → 0.900 | 0.660 → 0.700 | 0.640 → 0.680 \
+             | 0.680 → 0.720 | 40 |"
+        ));
+        assert!(text.contains(
+            "| concept | – → 0.700 | – → 0.700 | – → 0.500 | – → 0.480 | – → 0.520 | 5 |"
+        ));
         assert!(text.contains("- Backend: `bm25`\n"));
         snapshot("report_full", &text);
     }
@@ -198,7 +215,9 @@ mod tests {
             after: Some(&after),
             history: None,
         });
-        assert!(text.contains("| overall | – → 0.850 | – → 0.900 | – → 0.700 | 40 |"));
+        assert!(text.contains(
+            "| overall | – → 0.850 | – → 0.900 | – → 0.700 | – → 0.680 | – → 0.720 | 40 |"
+        ));
         assert!(text.contains("### Held-out queries"));
         snapshot("report_after_only", &text);
     }
@@ -231,7 +250,10 @@ mod tests {
             history: Some(&rows),
         });
         assert!(text.contains("_No evaluation results supplied._\n\n## History\n\n"));
-        assert!(text.contains("| 001 | a1b2c3d | bm25 | 0.800 |"), "{text}");
+        assert!(
+            text.contains("| 001 | a1b2c3d | bm25 | 0.800 | 0.850 | 0.660 | 0.640 | 0.680 | 40 |"),
+            "{text}"
+        );
         assert!(
             text.contains("| 01234567 | 2026-09-16T12:00:00Z |"),
             "{text}"

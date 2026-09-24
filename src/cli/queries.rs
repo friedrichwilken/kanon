@@ -18,7 +18,8 @@ pub(crate) enum QueriesCommand {
     /// Append a row after checking `--expected` against the committed manifest, or accept rows
     /// of a suggestions file with `--from`.
     Add(QueriesAddArgs),
-    /// Fail (exit 4) on unknown expected ids, duplicate ids or too small a held-out share.
+    /// Fail (exit 4) on unknown expected or graded ids, a grade above 3, an empty expected list
+    /// on a row that is not `kind: "negative"`, duplicate ids or too small a held-out share.
     Check {
         /// Query file (default: `queries` from the config).
         #[arg(long, value_name = "FILE")]
@@ -58,16 +59,17 @@ pub(crate) struct QueriesAddArgs {
     /// The query text.
     #[arg(long, required_unless_present = "from", conflicts_with = "from")]
     query: Option<String>,
-    /// Page ids, id prefixes, or the legacy `<source>/<path>` form; every one must exist.
+    /// Page ids, id prefixes, or the legacy `<source>/<path>` form; every one must exist. Not
+    /// with `--kind negative`, which takes none.
     #[arg(
         long,
         value_name = "ID",
         num_args = 1..,
-        required_unless_present = "from",
+        required_unless_present_any = ["from", "kind"],
         conflicts_with = "from"
     )]
     expected: Vec<String>,
-    /// Query kind, e.g. `howto`.
+    /// Query kind, e.g. `howto`; `negative` marks a query the corpus does not answer.
     #[arg(long, default_value = "", conflicts_with = "from")]
     kind: String,
     /// Hold this row (or every accepted row) out of tuning decisions.
@@ -152,6 +154,14 @@ fn run_queries_add(paths: &Paths, args: QueriesAddArgs) -> Result<ExitCode> {
         eprintln!("accepted {} suggestions", added.len());
         return Ok(ExitCode::SUCCESS);
     }
+    // clap cannot tie `--expected` to the value of `--kind`, so the two rules live here.
+    let negative = args.kind == kanon::eval::NEGATIVE_KIND;
+    if negative && !args.expected.is_empty() {
+        anyhow::bail!("--kind negative takes no --expected: the corpus does not answer the query");
+    }
+    if !negative && args.expected.is_empty() {
+        anyhow::bail!("--expected is required unless --kind negative");
+    }
     let options = QueriesAddOptions {
         queries: args.queries,
         id: args.id.unwrap_or_default(),
@@ -193,6 +203,20 @@ fn run_queries_check(paths: &Paths, queries: Option<&std::path::Path>) -> Result
     let report = commands::queries_check(paths, queries)?;
     for (id, expected) in &report.unknown {
         eprintln!("unknown: {id}: expected {expected:?} matches no page in the manifest");
+    }
+    for (id, entry) in &report.unknown_graded {
+        eprintln!("unknown: {id}: graded {entry:?} matches no page in the manifest");
+    }
+    for (id, entry, grade) in &report.bad_grade {
+        eprintln!("bad grade: {id}: graded {entry:?} is {grade}, above the maximum of 3");
+    }
+    for id in &report.empty_expected {
+        eprintln!(
+            "empty: {id}: no expected pages; only a row with kind \"negative\" may have none"
+        );
+    }
+    for id in &report.negative_with_expected {
+        eprintln!("negative: {id}: kind \"negative\" with expected pages; a negative row has none");
     }
     for id in &report.duplicate_ids {
         eprintln!("duplicate: {id}");

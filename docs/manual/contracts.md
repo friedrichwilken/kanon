@@ -41,8 +41,10 @@ Response ([schema](../schemas/backend-response.schema.json);
 ]}
 ```
 
-Hits come best first; `kanon` keeps the first `k` and uses only their order. `heading` may be
-omitted (it defaults to empty). `unit_id` is optional and names the [unit](#unit) that matched,
+Hits come best first; `kanon` keeps the first `k` and ranks by their order. The first hit's
+`score` is recorded as the result's `top_score` and decides a negative query against
+`--negative-threshold`, so it should be comparable across the backend's own answers. `heading`
+may be omitted (it defaults to empty). `unit_id` is optional and names the [unit](#unit) that matched,
 so a backend that retrieves sections is graded on the same cuts `kanon` makes; today `kanon`
 reads it and scores the page.
 

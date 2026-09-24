@@ -220,6 +220,157 @@ fn check_exits_4_on_an_unmet_holdout_share_and_0_once_it_is_met() {
 }
 
 #[test]
+fn check_accepts_an_empty_expected_list_only_on_negative_rows_and_validates_grades() {
+    let dir = workspace();
+    let root = dir.path();
+
+    // A negative row and a graded row pass.
+    fs::write(
+        root.join("queries.jsonl"),
+        "{\"id\": \"a\", \"query\": \"a\", \"expected\": [\"handbook::docs/a.md\"], \
+         \"graded\": {\"handbook::docs/a.md\": 3, \"handbook::docs/\": 1}}\n\
+         {\"id\": \"none\", \"kind\": \"negative\", \"query\": \"nothing\", \"expected\": [], \
+         \"holdout\": true}\n",
+    )
+    .unwrap();
+    let out = kanon(
+        root,
+        "nonexistent.yaml",
+        &["queries", "check", "--queries", "queries.jsonl"],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // An empty list on any other kind, a grade above 3 and a graded key that names no page
+    // each fail the check (exit 4) with their own line.
+    fs::write(
+        root.join("queries.jsonl"),
+        "{\"id\": \"empty\", \"kind\": \"howto\", \"query\": \"a\", \"expected\": []}\n\
+         {\"id\": \"b\", \"query\": \"b\", \"expected\": [\"handbook::docs/b.md\"], \
+         \"graded\": {\"handbook::docs/b.md\": 4, \"handbook::missing.md\": 2}, \"holdout\": true}\n",
+    )
+    .unwrap();
+    let out = kanon(
+        root,
+        "nonexistent.yaml",
+        &["queries", "check", "--queries", "queries.jsonl"],
+    );
+    assert_eq!(out.status.code(), Some(4));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("empty: empty: no expected pages; only a row with kind \"negative\""),
+        "{stderr}"
+    );
+    assert!(
+        stderr
+            .contains("bad grade: b: graded \"handbook::docs/b.md\" is 4, above the maximum of 3"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("unknown: b: graded \"handbook::missing.md\" matches no page"),
+        "{stderr}"
+    );
+    assert!(
+        !stderr.contains("expected \"handbook::missing.md\""),
+        "{stderr}"
+    );
+
+    // The mirror rule: a negative row that names expected pages fails with its own line.
+    fs::write(
+        root.join("queries.jsonl"),
+        "{\"id\": \"both\", \"kind\": \"negative\", \"query\": \"a\", \
+         \"expected\": [\"handbook::docs/a.md\"], \"holdout\": true}\n",
+    )
+    .unwrap();
+    let out = kanon(
+        root,
+        "nonexistent.yaml",
+        &["queries", "check", "--queries", "queries.jsonl"],
+    );
+    assert_eq!(out.status.code(), Some(4));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("negative: both: kind \"negative\" with expected pages"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn add_kind_negative_needs_no_expected_and_refuses_one() {
+    let dir = workspace();
+    let root = dir.path();
+    let add = |extra: &[&str]| {
+        let mut args = vec!["queries", "add", "--queries", "queries.jsonl"];
+        args.extend_from_slice(extra);
+        kanon(root, "nonexistent.yaml", &args)
+    };
+
+    let out = add(&[
+        "--id",
+        "none",
+        "--query",
+        "nothing here",
+        "--kind",
+        "negative",
+        "--holdout",
+    ]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = fs::read_to_string(root.join("queries.jsonl")).unwrap();
+    let row: serde_json::Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
+    assert_eq!(row["kind"], "negative");
+    assert_eq!(row["expected"], serde_json::json!([]));
+    let out = kanon(
+        root,
+        "nonexistent.yaml",
+        &["queries", "check", "--queries", "queries.jsonl"],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // A negative row with pages, and any other kind without them, are refused unappended.
+    let out = add(&[
+        "--id",
+        "x",
+        "--query",
+        "x",
+        "--kind",
+        "negative",
+        "--expected",
+        "handbook/docs/a.md",
+    ]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("--kind negative takes no --expected"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let out = add(&["--id", "y", "--query", "y", "--kind", "howto"]);
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("--expected"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("queries.jsonl"))
+            .unwrap()
+            .lines()
+            .count(),
+        1
+    );
+}
+
+#[test]
 fn add_from_accepts_suggestions_and_keeps_their_origin() {
     let dir = workspace();
     let root = dir.path();

@@ -5,6 +5,8 @@
       "overall": {
         "mrr": 0.625,
         "n": 2,
+        "ndcg@10": 0.7153382790366966,
+        "ndcg@5": 0.7153382790366966,
         "recall@10": 1.0,
         "recall@5": 1.0
       },
@@ -12,6 +14,8 @@
         "howto": {
           "mrr": 0.625,
           "n": 2,
+          "ndcg@10": 0.7153382790366966,
+          "ndcg@5": 0.7153382790366966,
           "recall@10": 1.0,
           "recall@5": 1.0
         }
@@ -24,6 +28,20 @@
         "holdout": false,
         "id": "install",
         "kind": "howto",
+        "ndcg10": 0.7978637366933587,
+        "ndcg5": 0.7978637366933587,
+        "rels": [
+          3,
+          0,
+          0,
+          2,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
         "rr": 1.0,
         "top": [
           "handbook::docs/install.md",
@@ -36,7 +54,8 @@
           "handbook::docs/concepts/notifications.md",
           "cookbook::docs/recipes/export-csv.md",
           "handbook::docs/troubleshooting/slow-queries.md"
-        ]
+        ],
+        "top_score": 0.032787
       },
       {
         "hit10": true,
@@ -44,6 +63,20 @@
         "holdout": false,
         "id": "backup",
         "kind": "howto",
+        "ndcg10": 1.0,
+        "ndcg5": 1.0,
+        "rels": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
         "rr": 1.0,
         "top": [
           "handbook::docs/tutorials/backup-restore.md",
@@ -56,7 +89,8 @@
           "handbook::docs/uninstall.md",
           "handbook::docs/install.md",
           "schemas::reference/messaging.example.com/subscription-v1.md"
-        ]
+        ],
+        "top_score": 0.032018
       },
       {
         "hit10": true,
@@ -64,6 +98,20 @@
         "holdout": false,
         "id": "tls-port",
         "kind": "reference",
+        "ndcg10": 1.0,
+        "ndcg5": 1.0,
+        "rels": [
+          3,
+          2,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
         "rr": 1.0,
         "top": [
           "handbook::docs/configuration.md",
@@ -76,7 +124,43 @@
           "handbook::docs/concepts/storage.md",
           "cookbook::docs/recipes/notification-templates.md",
           "guides::docs/rotate-keys.md"
-        ]
+        ],
+        "top_score": 0.031778
+      },
+      {
+        "hit10": false,
+        "hit5": false,
+        "holdout": false,
+        "id": "no-answer",
+        "kind": "negative",
+        "ndcg10": 0.0,
+        "ndcg5": 0.0,
+        "rels": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "rr": 0.0,
+        "top": [
+          "handbook::docs/concepts/architecture.md",
+          "handbook::docs/tutorials/backup-restore.md",
+          "handbook::docs/upgrade.md",
+          "handbook::docs/troubleshooting/startup-failures.md",
+          "handbook::docs/reference/cli.md",
+          "guides::docs/rotate-keys.md",
+          "schemas::reference/messaging.example.com/subscription-v1.md",
+          "cookbook::docs/recipes/webhooks.md",
+          "handbook::docs/getting-started.md",
+          "cookbook::docs/recipes/export-csv.md"
+        ],
+        "top_score": 0.016393
       },
       {
         "hit10": true,
@@ -84,6 +168,20 @@
         "holdout": false,
         "id": "rotate-keys",
         "kind": "howto",
+        "ndcg10": 1.0,
+        "ndcg5": 1.0,
+        "rels": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
         "rr": 1.0,
         "top": [
           "guides::docs/rotate-keys.md",
@@ -96,7 +194,8 @@
           "handbook::docs/concepts/networking.md",
           "handbook::docs/troubleshooting/startup-failures.md",
           "cookbook::docs/recipes/rate-limiting.md"
-        ]
+        ],
+        "top_score": 0.032787
       },
       {
         "hit10": true,
@@ -104,6 +203,20 @@
         "holdout": false,
         "id": "caching",
         "kind": "howto",
+        "ndcg10": 1.0,
+        "ndcg5": 1.0,
+        "rels": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
         "rr": 1.0,
         "top": [
           "guides::docs/enable-caching.md",
@@ -116,7 +229,8 @@
           "schemas::reference/messaging.example.com/subscription-v1.md",
           "handbook::docs/concepts/storage.md",
           "guides::docs/quota-limits.md"
-        ]
+        ],
+        "top_score": 0.032522
       },
       {
         "hit10": true,
@@ -124,6 +238,20 @@
         "holdout": false,
         "id": "quota",
         "kind": "reference",
+        "ndcg10": 1.0,
+        "ndcg5": 1.0,
+        "rels": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
         "rr": 1.0,
         "top": [
           "guides::docs/quota-limits.md",
@@ -136,7 +264,8 @@
           "handbook::docs/install.md",
           "cookbook::docs/recipes/rate-limiting.md",
           "guides::docs/enable-caching.md"
-        ]
+        ],
+        "top_score": 0.032522
       },
       {
         "hit10": true,
@@ -144,6 +273,20 @@
         "holdout": false,
         "id": "startup",
         "kind": "troubleshooting",
+        "ndcg10": 1.0,
+        "ndcg5": 1.0,
+        "rels": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
         "rr": 1.0,
         "top": [
           "handbook::docs/troubleshooting/startup-failures.md",
@@ -156,7 +299,8 @@
           "guides::docs/rotate-keys.md",
           "handbook::docs/getting-started.md",
           "cookbook::docs/README.md"
-        ]
+        ],
+        "top_score": 0.032018
       },
       {
         "hit10": true,
@@ -164,6 +308,20 @@
         "holdout": false,
         "id": "slow",
         "kind": "troubleshooting",
+        "ndcg10": 1.0,
+        "ndcg5": 1.0,
+        "rels": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
         "rr": 1.0,
         "top": [
           "handbook::docs/troubleshooting/slow-queries.md",
@@ -176,7 +334,8 @@
           "guides::docs/monitor-metrics.md",
           "guides::docs/quota-limits.md",
           "handbook::docs/tutorials/backup-restore.md"
-        ]
+        ],
+        "top_score": 0.032787
       },
       {
         "hit10": true,
@@ -184,6 +343,20 @@
         "holdout": false,
         "id": "architecture",
         "kind": "concept",
+        "ndcg10": 1.0,
+        "ndcg5": 1.0,
+        "rels": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
         "rr": 1.0,
         "top": [
           "handbook::docs/concepts/architecture.md",
@@ -196,7 +369,8 @@
           "schemas::reference/messaging.example.com/subscription-v1.md",
           "handbook::docs/troubleshooting/startup-failures.md",
           "cookbook::docs/recipes/notification-templates.md"
-        ]
+        ],
+        "top_score": 0.030886
       },
       {
         "hit10": false,
@@ -204,6 +378,20 @@
         "holdout": false,
         "id": "plugin",
         "kind": "howto",
+        "ndcg10": 0.0,
+        "ndcg5": 0.0,
+        "rels": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
         "rr": 0.0,
         "top": [
           "handbook::docs/concepts/architecture.md",
@@ -216,7 +404,8 @@
           "cookbook::docs/recipes/notification-templates.md",
           "handbook::docs/reference/cli.md",
           "guides::docs/scale-workers.md"
-        ]
+        ],
+        "top_score": 0.030282
       },
       {
         "hit10": true,
@@ -224,6 +413,20 @@
         "holdout": false,
         "id": "crd-sink-field",
         "kind": "reference",
+        "ndcg10": 1.0,
+        "ndcg5": 1.0,
+        "rels": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
         "rr": 1.0,
         "top": [
           "schemas::reference/messaging.example.com/subscription-v1.md",
@@ -236,7 +439,8 @@
           "handbook::docs/getting-started.md",
           "handbook::docs/concepts/networking.md",
           "handbook::docs/upgrade.md"
-        ]
+        ],
+        "top_score": 0.029907
       },
       {
         "hit10": true,
@@ -244,6 +448,20 @@
         "holdout": false,
         "id": "crd-type-matching-field",
         "kind": "reference",
+        "ndcg10": 1.0,
+        "ndcg5": 1.0,
+        "rels": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
         "rr": 1.0,
         "top": [
           "schemas::reference/messaging.example.com/subscription-v1.md",
@@ -256,7 +474,8 @@
           "cookbook::docs/recipes/cron-jobs.md",
           "handbook::docs/concepts/networking.md",
           "handbook::docs/troubleshooting/startup-failures.md"
-        ]
+        ],
+        "top_score": 0.030282
       },
       {
         "hit10": true,
@@ -264,6 +483,20 @@
         "holdout": true,
         "id": "webhooks",
         "kind": "howto",
+        "ndcg10": 0.43067655807339306,
+        "ndcg5": 0.43067655807339306,
+        "rels": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
         "rr": 0.25,
         "top": [
           "cookbook::docs/recipes/notification-templates.md",
@@ -276,7 +509,8 @@
           "handbook::docs/configuration.md",
           "handbook::docs/troubleshooting/startup-failures.md",
           "handbook::docs/reference/config-keys.md"
-        ]
+        ],
+        "top_score": 0.031746
       },
       {
         "hit10": true,
@@ -284,6 +518,20 @@
         "holdout": true,
         "id": "metrics",
         "kind": "howto",
+        "ndcg10": 1.0,
+        "ndcg5": 1.0,
+        "rels": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
         "rr": 1.0,
         "top": [
           "guides::docs/monitor-metrics.md",
@@ -296,13 +544,21 @@
           "handbook::docs/tutorials/first-project.md",
           "schemas::reference/messaging.example.com/subscription-v1.md",
           "handbook::docs/concepts/networking.md"
-        ]
+        ],
+        "top_score": 0.032522
       }
     ],
     "tuning": {
+      "negative": {
+        "n": 1,
+        "rejected": 0,
+        "share": 0.0
+      },
       "overall": {
         "mrr": 0.9166666666666666,
         "n": 12,
+        "ndcg@10": 0.8998219780577799,
+        "ndcg@5": 0.8998219780577799,
         "recall@10": 0.9166666666666666,
         "recall@5": 0.9166666666666666
       },
@@ -310,24 +566,32 @@
         "concept": {
           "mrr": 1.0,
           "n": 1,
+          "ndcg@10": 1.0,
+          "ndcg@5": 1.0,
           "recall@10": 1.0,
           "recall@5": 1.0
         },
         "howto": {
           "mrr": 0.8,
           "n": 5,
+          "ndcg@10": 0.7595727473386717,
+          "ndcg@5": 0.7595727473386717,
           "recall@10": 0.8,
           "recall@5": 0.8
         },
         "reference": {
           "mrr": 1.0,
           "n": 4,
+          "ndcg@10": 1.0,
+          "ndcg@5": 1.0,
           "recall@10": 1.0,
           "recall@5": 1.0
         },
         "troubleshooting": {
           "mrr": 1.0,
           "n": 2,
+          "ndcg@10": 1.0,
+          "ndcg@5": 1.0,
           "recall@10": 1.0,
           "recall@5": 1.0
         }

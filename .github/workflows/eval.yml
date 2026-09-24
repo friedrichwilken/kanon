@@ -4,7 +4,8 @@
 #
 # Exit codes of the job, the same as `kanon eval`'s:
 #   0  the gate passed (or there is no baseline yet: the first run only records one)
-#   2  the gate failed: tuning recall@5 dropped by more than `max_recall_drop`
+#   2  the gate failed: the gated tuning metric (recall@5, or the config's `gate_metric`)
+#      dropped by more than `max_recall_drop`
 #   1  an error (no artifact, a bad query file, the endpoint did not answer, ...)
 # A failed gate fails the job, but the summary and the comment are still written first.
 #

@@ -37,8 +37,9 @@ Each one reads and writes plain files. None needs the others at runtime.
 ## Status
 
 Pre-release. The evaluation commands (`eval`, `embed`, `grade`, `queries`, `report`) have
-moved here out of `pinakes`, where they started, with the same flags and file formats; see
-the [issues](https://github.com/friedrichwilken/kanon/issues) for what comes next.
+moved here out of `pinakes`, where they started, with the same flags and file formats;
+`history` is new here. See the [issues](https://github.com/friedrichwilken/kanon/issues) for
+what comes next.
 
 ## Quick start
 
@@ -63,6 +64,12 @@ with an `eval:` block works as before. `eval --json baseline.json` records a run
 and `eval --compare bm25,bm25-tantivy,dense,hybrid,external` scores several retrievers over
 the same query set. Model endpoints come from `KANON_EMBED_URL` and `KANON_LLM_URL` (the
 `PINAKES_*` names still work).
+
+`eval --out runs/` also writes the result as `runs/NNN-<label>.json`, numbered after the last
+run in the directory and labelled with `--label` or the git short SHA, with the backend, the
+manifest and query-set hashes and the time inside. `kanon history` lists those runs as a
+Markdown table (`--json OUT` for the rows as JSON), and `report --runs runs/` adds the same
+table as a History section. Commit the directory and the numbers have a series.
 
 ## Licence
 

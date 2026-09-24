@@ -16,6 +16,7 @@ mod cli;
 use cli::embed::{EmbedArgs, run_embed};
 use cli::eval::{EvalArgs, run_eval};
 use cli::grade::{GradeArgs, run_grade};
+use cli::history::{HistoryArgs, run_history};
 use cli::queries::{QueriesCommand, run_queries};
 use cli::report::{ReportArgs, run_report};
 
@@ -47,6 +48,8 @@ enum Command {
     Grade(GradeArgs),
     /// Render the evaluation sections of a Markdown report on stdout.
     Report(ReportArgs),
+    /// List the runs `eval --out` wrote: a Markdown table on stdout, or JSON with `--json`.
+    History(HistoryArgs),
 }
 
 fn main() -> ExitCode {
@@ -78,5 +81,6 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Command::Embed(args) => run_embed(paths, args),
         Command::Grade(args) => run_grade(&paths, args),
         Command::Report(args) => run_report(args),
+        Command::History(args) => run_history(&paths, args),
     }
 }

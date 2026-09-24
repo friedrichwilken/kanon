@@ -13,6 +13,7 @@ use crate::config::ConfigError;
 use crate::embed::EmbedError;
 use crate::eval::EvalError;
 use crate::grade::GradeError;
+use crate::history::HistoryError;
 use crate::llm::LlmEnvError;
 use crate::queries::QueriesError;
 
@@ -67,6 +68,9 @@ pub enum CommandError {
     /// `grade` failed, including talking to the model or the backend.
     #[error(transparent)]
     Grade(#[from] GradeError),
+    /// A run file could not be written or read.
+    #[error(transparent)]
+    History(#[from] HistoryError),
 }
 
 /// A page-loading failure is reported as the [`IndexError`] it has always been.

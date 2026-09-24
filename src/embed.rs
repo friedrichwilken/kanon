@@ -481,9 +481,11 @@ mod tests {
 
     #[test]
     fn missing_env_is_an_error_not_a_silent_skip() {
-        // SAFETY: test-local env manipulation; no other test in this process reads these keys.
+        let _guard = crate::testing::ENV_LOCK.lock().unwrap();
+        // SAFETY: serialised by ENV_LOCK; no other test observes these vars concurrently.
         unsafe {
             std::env::remove_var("KANON_EMBED_URL");
+            std::env::remove_var("PINAKES_EMBED_URL");
         }
         assert!(matches!(
             HttpEmbedder::from_env(None).unwrap_err(),

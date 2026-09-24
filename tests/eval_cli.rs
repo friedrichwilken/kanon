@@ -386,8 +386,8 @@ fn eval_config_relative_embeddings_path_resolves_against_config_dir() {
     assert!(stderr.contains("sub/custom/embeddings.json"), "{stderr}");
 }
 
-/// `--backend dense` needs `KANON_EMBED_URL`; without it, the exact original wording (about to
-/// move from main.rs's `embedder_from_env` into the library) must survive byte for byte.
+/// `--backend dense` needs `KANON_EMBED_URL`; without it, the exact wording must survive byte
+/// for byte.
 #[test]
 fn eval_backend_dense_without_embed_url_errors() {
     let dir = workspace();
@@ -395,6 +395,7 @@ fn eval_backend_dense_without_embed_url_errors() {
     let out = Command::new(env!("CARGO_BIN_EXE_kanon"))
         .current_dir(root)
         .env_remove("KANON_EMBED_URL")
+        .env_remove("PINAKES_EMBED_URL")
         .args([
             "--config",
             "nonexistent.yaml",

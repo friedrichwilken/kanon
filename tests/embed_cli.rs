@@ -125,6 +125,7 @@ fn embed_writes_the_embeddings_file_pair() {
     let out = Command::new(env!("CARGO_BIN_EXE_kanon"))
         .current_dir(dir.path())
         .env_remove("KANON_EMBED_URL")
+        .env_remove("PINAKES_EMBED_URL")
         .arg("--config")
         .arg("nonexistent.yaml")
         .arg("embed")

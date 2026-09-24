@@ -52,6 +52,14 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap();
         // SAFETY: serialised by ENV_LOCK; no other test observes these vars concurrently.
         unsafe {
+            for name in [
+                "KANON_LLM_URL",
+                "PINAKES_LLM_URL",
+                "KANON_LLM_MODEL",
+                "PINAKES_LLM_MODEL",
+            ] {
+                std::env::remove_var(name);
+            }
             std::env::set_var("PINAKES_LLM_URL", "https://fallback.test");
             std::env::set_var("KANON_LLM_MODEL", "env-model");
         }

@@ -22,9 +22,9 @@ belongs in git: a query set, a run, a gate, a report.
 ## Layout
 
 **Depend on nothing else in the crate:** `config` (`kanon.yaml`, or the `eval:` block of
-`pinakes.yaml`, and source priorities read from `pinakes.yaml`), `workspace` (`Paths`),
-`llm` (the model endpoint from `KANON_LLM_*`), `env` (`KANON_*` with a `PINAKES_*` fallback)
-and `num`.
+`pinakes.yaml`, and source priorities read from `pinakes.yaml`), `workspace` (`Paths`), `env`
+(`KANON_*` with a `PINAKES_*` fallback) and `num`. `llm` (the model endpoint from
+`KANON_LLM_*`) sits on `env`.
 
 **Measuring:** `eval` (the judge, the metrics, the result file); `embed` (the embeddings file
 pair and the `Embedder` trait); `backend` (the `Backend` trait and `bm25`, `tantivy`, `dense`,

@@ -24,7 +24,8 @@ use cli::report::{ReportArgs, run_report};
 #[command(name = "kanon", version, about)]
 struct Cli {
     /// Path to the configuration: `kanon.yaml`, or a `pinakes.yaml` whose `eval:` block
-    /// stands in for it (the fallback when `kanon.yaml` does not exist).
+    /// stands in for it (the fallback when `kanon.yaml` does not exist). Source priorities for
+    /// the mirror rule come from that `pinakes.yaml`, or from the one next to `kanon.yaml`.
     #[arg(long, global = true, default_value = KANON_CONFIG)]
     config: PathBuf,
     #[command(subcommand)]

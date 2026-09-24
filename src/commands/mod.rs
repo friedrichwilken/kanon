@@ -40,13 +40,59 @@ pub struct Settings {
 }
 
 /// Read the workspace's [`Settings`]. A missing config file is fine (every command has flags
-/// for what it needs); a present but invalid one is an error.
+/// for what it needs); a present but invalid one is an error. Priorities come from the config
+/// itself when it is a `pinakes.yaml` under any name, else from the `pinakes.yaml` next to it.
 pub fn settings(paths: &Paths) -> Result<Settings, CommandError> {
-    let config = if paths.config.is_file() {
-        config::load(&paths.config)?
+    let document = if paths.config.is_file() {
+        config::load_document(&paths.config)?
     } else {
-        None
+        config::Document::default()
     };
-    let priorities = config::priorities(&paths.pinakes_config())?;
-    Ok(Settings { config, priorities })
+    let priorities = match document.priorities {
+        Some(priorities) => priorities,
+        None => config::priorities(&paths.pinakes_config())?,
+    };
+    Ok(Settings {
+        config: document.config,
+        priorities,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::eval_workspace;
+
+    const PINAKES: &str = "version: 1\nsources:\n  - name: handbook\n    repo: https://github.com/o/handbook.git\n    \
+                           ref: main\n    priority: 7\n    resolver:\n      type: glob\n      include: ['**/*.md']\n\
+                           eval:\n  queries: queries.jsonl\n  k: 4\n";
+
+    #[test]
+    fn settings_take_priorities_from_the_named_file_before_the_sibling() {
+        let (dir, paths) = eval_workspace();
+        assert!(settings(&paths).unwrap().config.is_none());
+        assert_eq!(settings(&paths).unwrap().priorities.of("handbook"), 1);
+
+        // A pinakes config under another name carries its own priorities.
+        let prod = dir.path().join("prod.yaml");
+        std::fs::write(&prod, PINAKES).unwrap();
+        let from_prod = settings(&Paths::for_config(&prod)).unwrap();
+        assert_eq!(from_prod.config.unwrap().k, 4);
+        assert_eq!(from_prod.priorities.of("handbook"), 7);
+
+        // A kanon.yaml takes them from the pinakes.yaml next to it, even one with no eval block.
+        std::fs::write(&paths.config, "queries: queries.jsonl\n").unwrap();
+        std::fs::write(
+            dir.path().join("pinakes.yaml"),
+            PINAKES
+                .split("eval:")
+                .next()
+                .unwrap()
+                .replace("priority: 7", "priority: 3"),
+        )
+        .unwrap();
+        let from_kanon = settings(&paths).unwrap();
+        assert_eq!(from_kanon.config.unwrap().k, crate::config::DEFAULT_K);
+        assert_eq!(from_kanon.priorities.of("handbook"), 3);
+    }
 }

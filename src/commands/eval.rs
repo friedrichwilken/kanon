@@ -927,10 +927,11 @@ mod tests {
 
     #[test]
     fn eval_embedder_from_env_reports_the_exact_original_wording_when_unset() {
-        // SAFETY: test-local env manipulation; no other test in this process sets this key (see
-        // embed.rs's `missing_env_is_an_error_not_a_silent_skip`, which follows the same rule).
+        let _guard = crate::testing::ENV_LOCK.lock().unwrap();
+        // SAFETY: serialised by ENV_LOCK; no other test observes these vars concurrently.
         unsafe {
             std::env::remove_var("KANON_EMBED_URL");
+            std::env::remove_var("PINAKES_EMBED_URL");
         }
         // `Rc<dyn Embedder>` is not `Debug`, so match manually instead of `unwrap_err()`.
         let Err(err) = eval_embedder_from_env() else {

@@ -66,10 +66,10 @@ fn golden_corpus_metrics_are_pinned() {
         "golden result changed; run `UPDATE_GOLDEN=1 cargo test --test golden` if intended"
     );
 
-    // Structural facts about the fixture that the pinned numbers rest on. Iteration 2 added a
-    // near-duplicate pair for `tests/duplicates.rs` to find: a distinctly titled copy
-    // of `handbook::docs/concepts/notifications.md` in the lower-priority `cookbook` source, so
-    // it is a normal extra page here, not a title mirror.
+    // Structural facts about the fixture that the pinned numbers rest on. The fixture carries
+    // a near-duplicate pair (a distinctly titled copy of
+    // `handbook::docs/concepts/notifications.md` in the lower-priority `cookbook` source), which
+    // is a normal extra page here, not a title mirror.
     assert_eq!(
         plain.page_count, 33,
         "thirty pages, one rendered CRD page, and the near-duplicate pair"

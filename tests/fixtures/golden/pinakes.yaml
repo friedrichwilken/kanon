@@ -1,13 +1,10 @@
-# The golden corpus (SPEC §7.3): three synthetic sources with different priorities, plus a
-# fourth (`schemas`) whose one page is a CRD rendered through the built-in `openapi` renderer
-# (SPEC §10.2), pinning the identifier-compound tokeniser rule (SPEC §10.3). The repositories are
-# placeholders; the artifact next to this file is committed as is and never fetched. `handbook`
-# outranks `guides`, which outranks `cookbook`, so the mirrored pages in the lower-priority
-# sources are left out of the search corpus.
-#
-# `cookbook` uses the mdBook resolver (SPEC §12); tests/golden_mdbook.rs exercises it against a
-# reconstruction of cookbook's committed pages. doc_type and section are stored metadata, not
-# scored by `eval` (SPEC §5).
+# The golden corpus: three synthetic sources with different priorities, plus a fourth
+# (`schemas`) whose one page is a CRD rendered by pinakes's built-in `openapi` renderer, pinning
+# the identifier-compound tokeniser rule. The repositories are placeholders; the artifact next to
+# this file is committed as is and never fetched. `handbook` outranks `guides`, which outranks
+# `cookbook`, so the mirrored pages in the lower-priority sources are left out of the search
+# corpus. kanon reads the `eval:` block and the priorities from this file; doc_type and section
+# are stored metadata, not scored by `eval`.
 version: 1
 sources:
   - name: handbook

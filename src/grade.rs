@@ -1,11 +1,11 @@
 //! `kanon grade`: replay distinct trail queries against a backend and ask the model to grade
 //! each candidate 0-3 for relevance.
 //!
-//! [`bm25_search`] is the "small function you own" the spec asks for: a thin wrapper around the
-//! built-in [`Index`] that stands in for the `Backend` trait, which `grade` does not
-//! exist yet. Once it lands, this function's body becomes an adapter over it (`--backend` picks
-//! the implementation); `grade`'s contract - one BM25-shaped `search(query, k) -> Vec<Hit>` call
-//! per distinct query - does not change.
+//! `grade` still fetches candidates through the built-in [`Index`] directly, via
+//! [`bm25_search`], rather than through [`crate::backend::Backend`]; `--backend` accepts only
+//! `bm25` until grade is wired to the trait, at which point [`bm25_search`] becomes an adapter
+//! over it. `grade`'s contract - one `search(query, k) -> Vec<Hit>` call per distinct query -
+//! does not change.
 
 use std::collections::BTreeSet;
 

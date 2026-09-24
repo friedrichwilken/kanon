@@ -7,8 +7,8 @@
 //!
 //! Four modules depend on nothing else in the crate: [`config`] (`kanon.yaml`, or the `eval:`
 //! block of `pinakes.yaml`), [`workspace`] ([`workspace::Paths`], the file locations every
-//! command uses), [`llm`] (the model endpoint from the environment) and `num` (the one
-//! `usize -> f64` cast).
+//! command uses), `env` (`KANON_*` variables with a `PINAKES_*` fallback) and `num` (the one
+//! `usize -> f64` cast); [`llm`] (the model endpoint from the environment) sits on `env`.
 //!
 //! [`eval`] is the judge (`queries.jsonl`), the metrics and the result file; [`embed`] writes
 //! and reads the embeddings file pair; [`backend`] is the [`backend::Backend`] trait and its

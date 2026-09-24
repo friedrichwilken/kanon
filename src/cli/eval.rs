@@ -34,8 +34,7 @@ pub(crate) struct EvalArgs {
     /// Pages to remove before measuring; prints the delta.
     #[arg(long, value_name = "ID", num_args = 1..)]
     without: Vec<String>,
-    /// Retriever backend to measure: bm25 (default), bm25-tantivy, dense, hybrid or external
-    ///.
+    /// Retriever backend to measure: bm25 (default), bm25-tantivy, dense, hybrid or external.
     #[arg(long, value_name = "NAME")]
     backend: Option<String>,
     /// The consumer's search endpoint base URL (`--backend external`).

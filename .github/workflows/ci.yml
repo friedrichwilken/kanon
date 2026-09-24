@@ -47,7 +47,7 @@ jobs:
       # Unit, integration, golden corpus and report snapshot tests.
       - run: cargo test --all-targets
       # Doctests are not covered by --all-targets.
-      - run: cargo test --release --doc
+      - run: cargo test --doc
 
   msrv:
     name: msrv

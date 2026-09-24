@@ -134,32 +134,73 @@ fn is_pinakes_config(value: &serde_yaml_ng::Value) -> bool {
     value.get("sources").is_some()
 }
 
+/// What one config file yields: the evaluation settings, and the source priorities when the
+/// file is a `pinakes.yaml` (decided by its content, not its name).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Document {
+    /// `kanon.yaml` as is, or the `eval:` block of a `pinakes.yaml`; `None` when a
+    /// `pinakes.yaml` has no such block.
+    pub config: Option<Config>,
+    /// `sources[].priority` when the file is a `pinakes.yaml`.
+    pub priorities: Option<Priorities>,
+}
+
 /// Read a config file: `kanon.yaml` as is, or the `eval:` block of a `pinakes.yaml` (`None`
 /// when that file has no such block).
 pub fn load(path: &Path) -> Result<Option<Config>, ConfigError> {
+    Ok(load_document(path)?.config)
+}
+
+/// Read a config file with everything it carries; see [`Document`].
+pub fn load_document(path: &Path) -> Result<Document, ConfigError> {
     let text = std::fs::read_to_string(path).map_err(io(path))?;
-    from_yaml(path, &text)
+    parse_document(path, &text)
 }
 
 /// Parse config text; `path` only labels errors.
 pub fn from_yaml(path: &Path, text: &str) -> Result<Option<Config>, ConfigError> {
+    Ok(parse_document(path, text)?.config)
+}
+
+/// Parse config text with everything it carries; `path` only labels errors.
+pub fn parse_document(path: &Path, text: &str) -> Result<Document, ConfigError> {
     let value: serde_yaml_ng::Value = serde_yaml_ng::from_str(text).map_err(yaml(path))?;
-    let block = if is_pinakes_config(&value) {
-        match value.get("eval") {
-            Some(block) => block.clone(),
-            None => return Ok(None),
-        }
+    let (block, priorities) = if is_pinakes_config(&value) {
+        (value.get("eval").cloned(), Some(priorities_of(&value)))
     } else {
-        value
+        (Some(value), None)
     };
-    let config: Config = serde_yaml_ng::from_value(block).map_err(yaml(path))?;
-    if config.version != CONFIG_VERSION {
+    let config = block
+        .map(|block| serde_yaml_ng::from_value::<Config>(block).map_err(yaml(path)))
+        .transpose()?;
+    if let Some(config) = &config
+        && config.version != CONFIG_VERSION
+    {
         return Err(ConfigError::Version {
             path: path.to_path_buf(),
             version: config.version,
         });
     }
-    Ok(Some(config))
+    Ok(Document { config, priorities })
+}
+
+/// `sources[].priority` of a parsed `pinakes.yaml` (default 1); only `name` and `priority`
+/// are read, so a file written for another pinakes version still yields them.
+fn priorities_of(value: &serde_yaml_ng::Value) -> Priorities {
+    let mut priorities = Priorities::default();
+    if let Some(sources) = value.get("sources").and_then(|s| s.as_sequence()) {
+        for source in sources {
+            let Some(name) = source.get("name").and_then(|n| n.as_str()) else {
+                continue;
+            };
+            let priority = source
+                .get("priority")
+                .and_then(serde_yaml_ng::Value::as_i64)
+                .unwrap_or(pinakes::index::DEFAULT_PRIORITY);
+            priorities.explicit.insert(name.to_string(), priority);
+        }
+    }
+    priorities
 }
 
 /// Source priorities from a `pinakes.yaml` (`sources[].priority`, default 1); every source is
@@ -174,20 +215,7 @@ pub fn priorities(pinakes_config: &Path) -> Result<Priorities, ConfigError> {
     };
     let value: serde_yaml_ng::Value =
         serde_yaml_ng::from_str(&text).map_err(yaml(pinakes_config))?;
-    let mut priorities = Priorities::default();
-    if let Some(sources) = value.get("sources").and_then(|s| s.as_sequence()) {
-        for source in sources {
-            let Some(name) = source.get("name").and_then(|n| n.as_str()) else {
-                continue;
-            };
-            let priority = source
-                .get("priority")
-                .and_then(serde_yaml_ng::Value::as_i64)
-                .unwrap_or(pinakes::index::DEFAULT_PRIORITY);
-            priorities.explicit.insert(name.to_string(), priority);
-        }
-    }
-    Ok(priorities)
+    Ok(priorities_of(&value))
 }
 
 #[cfg(test)]
@@ -303,6 +331,21 @@ eval:
             priorities(&path).unwrap_err(),
             ConfigError::Yaml { .. }
         ));
+    }
+
+    #[test]
+    fn a_pinakes_config_carries_priorities_under_any_name() {
+        let doc = parse_document(Path::new("configs/prod.yaml"), PINAKES).unwrap();
+        assert_eq!(doc.config.unwrap().queries, Path::new("queries.jsonl"));
+        assert_eq!(doc.priorities.as_ref().unwrap().of("handbook"), 10);
+        let doc = parse_document(Path::new("kanon.yaml"), "queries: q.jsonl\n").unwrap();
+        assert!(
+            doc.priorities.is_none(),
+            "a kanon.yaml never carries priorities"
+        );
+        let without = PINAKES.split("eval:").next().unwrap();
+        let doc = parse_document(Path::new("pinakes.yaml"), without).unwrap();
+        assert!(doc.config.is_none() && doc.priorities.is_some());
     }
 
     #[test]

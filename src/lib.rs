@@ -18,7 +18,8 @@
 //! five shapes (`bm25`, `bm25-tantivy`, `dense`, `hybrid`, `external`); [`grade`] replays a
 //! trail against a backend and asks a model to grade what came back; [`queries`] grows and
 //! validates the judge; [`report`] renders the evaluation sections of a Markdown report;
-//! [`history`] is the numbered run files `eval --out` writes and the rows `history` reads back.
+//! [`history`] is the numbered run files `eval --out` writes and the rows `history` reads back;
+//! [`svg`] draws the charts `report --svg` writes next to that Markdown.
 //!
 //! [`error`] holds [`error::CommandError`], the error type every command returns. [`commands`]
 //! is one file per subcommand, each owning its options and outcome. The `kanon` binary's own
@@ -39,6 +40,7 @@ mod num;
 pub mod queries;
 pub mod report;
 mod rng;
+pub mod svg;
 #[cfg(test)]
 pub(crate) mod testing;
 pub mod workspace;

@@ -98,6 +98,13 @@ manifest and query-set hashes and the time inside. `kanon history` lists those r
 Markdown table (`--json OUT` for the rows as JSON), and `report --runs runs/` adds the same
 table as a History section. Commit the directory and the numbers have a series.
 
+`report --svg DIR` also writes the facts that decide a review as charts, linked from the
+report: recall, MRR and nDCG@5 over the runs (tuning solid, held-out dashed), the rank of each
+query's first expected hit before and after, and recall@5 per kind with tuning next to
+held-out. Hand-rolled SVG, so GitHub renders it inline anywhere the files are committed.
+
+![Recall, MRR and nDCG@5 over runs](docs/img/recall-over-runs.svg)
+
 No query set yet? `kanon queries suggest --n 50` samples pages across every source and section,
 asks the model at `KANON_LLM_URL` for two or three questions each page answers, and writes them
 to `suggestions.jsonl` with the page as the expected id. It never touches `queries.jsonl`: read

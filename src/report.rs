@@ -8,9 +8,11 @@
 
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
+use std::path::Path;
 
 use crate::eval::{EvalSummary, Metrics, Split};
 use crate::history::{self, HistoryRow};
+use crate::svg::Charts;
 
 /// Everything the report is rendered from.
 #[derive(Debug, Clone, Copy, Default)]
@@ -21,6 +23,21 @@ pub struct ReportInput<'a> {
     pub after: Option<&'a EvalSummary>,
     /// The rows of a run directory (`--runs`); the History section appears only when given.
     pub history: Option<&'a [HistoryRow]>,
+    /// The chart files `--svg DIR` wrote; each is linked under the section it belongs to.
+    pub charts: Option<&'a Charts>,
+}
+
+/// An image link to a chart file, under the section it belongs to. A path with whitespace
+/// or parentheses goes in angle brackets, as Markdown needs.
+fn chart_link(out: &mut String, alt: &str, path: Option<&Path>) {
+    if let Some(path) = path {
+        let path = path.display().to_string();
+        if path.contains(|c: char| c.is_whitespace() || c == '(' || c == ')') {
+            let _ = writeln!(out, "![{alt}](<{path}>)\n");
+        } else {
+            let _ = writeln!(out, "![{alt}]({path})\n");
+        }
+    }
 }
 
 /// Render the report as Markdown.
@@ -37,10 +54,26 @@ pub fn render(input: ReportInput<'_>) -> String {
         let _ = writeln!(out, "- Backend: {}\n", names.join(", "));
     }
     eval_section(&mut out, input.before, input.after);
+    let charts = input.charts;
+    chart_link(
+        &mut out,
+        "Recall@5 per kind, tuning next to held-out",
+        charts.and_then(|c| c.recall_per_kind.as_deref()),
+    );
+    chart_link(
+        &mut out,
+        "Rank of the first expected hit per query, before to after",
+        charts.and_then(|c| c.rank_movement.as_deref()),
+    );
     if let Some(rows) = input.history {
         out.push_str("## History\n\n");
         out.push_str(&history::render_table(rows));
         out.push('\n');
+        chart_link(
+            &mut out,
+            "Recall, MRR and nDCG@5 over runs",
+            charts.and_then(|c| c.recall_over_runs.as_deref()),
+        );
     }
     out
 }
@@ -187,6 +220,7 @@ mod tests {
             before: Some(&before),
             after: Some(&after),
             history: None,
+            charts: None,
         });
         assert!(text.contains(
             "| overall | 0.800 → 0.850 | 0.850 → 0.900 | 0.660 → 0.700 | 0.640 → 0.680 \
@@ -214,6 +248,7 @@ mod tests {
             before: None,
             after: Some(&after),
             history: None,
+            charts: None,
         });
         assert!(text.contains(
             "| overall | – → 0.850 | – → 0.900 | – → 0.700 | – → 0.680 | – → 0.720 | 40 |"
@@ -248,6 +283,7 @@ mod tests {
             before: None,
             after: None,
             history: Some(&rows),
+            charts: None,
         });
         assert!(text.contains("_No evaluation results supplied._\n\n## History\n\n"));
         assert!(
@@ -260,5 +296,65 @@ mod tests {
         );
         assert!(text.contains("| 002 | – | bm25 | 0.850 |"), "{text}");
         snapshot("report_history", &text);
+    }
+
+    #[test]
+    fn report_links_the_charts_under_their_sections() {
+        let (before, after) = evals();
+        let rows = vec![HistoryRow::of(
+            1,
+            Path::new("runs/001-a.json"),
+            &history::Run {
+                summary: before.clone(),
+                run: None,
+            },
+        )];
+        let charts = Charts {
+            recall_over_runs: Some("out/recall-over-runs.svg".into()),
+            rank_movement: Some("out/rank-movement.svg".into()),
+            recall_per_kind: Some("out/recall-per-kind.svg".into()),
+        };
+        let text = render(ReportInput {
+            before: Some(&before),
+            after: Some(&after),
+            history: Some(&rows),
+            charts: Some(&charts),
+        });
+        let per_kind = text.find("](out/recall-per-kind.svg)\n\n").unwrap();
+        let movement = text.find("](out/rank-movement.svg)\n\n").unwrap();
+        let over_runs = text.find("](out/recall-over-runs.svg)\n").unwrap();
+        let held_out = text.find("### Held-out queries").unwrap();
+        let history_at = text.find("## History").unwrap();
+        assert!(held_out < per_kind && per_kind < movement, "{text}");
+        assert!(movement < history_at && history_at < over_runs, "{text}");
+        assert!(text.ends_with("](out/recall-over-runs.svg)\n\n"), "{text}");
+
+        // A chart that was not written leaves no link.
+        let text = render(ReportInput {
+            before: Some(&before),
+            after: Some(&after),
+            history: None,
+            charts: Some(&Charts {
+                recall_over_runs: None,
+                ..charts
+            }),
+        });
+        assert!(!text.contains("recall-over-runs"), "{text}");
+        assert!(text.contains("](out/rank-movement.svg)"), "{text}");
+
+        // A directory with a space or a parenthesis needs angle brackets.
+        let text = render(ReportInput {
+            before: Some(&before),
+            after: None,
+            history: None,
+            charts: Some(&Charts {
+                recall_per_kind: Some("my (charts)/recall-per-kind.svg".into()),
+                ..Charts::default()
+            }),
+        });
+        assert!(
+            text.contains("](<my (charts)/recall-per-kind.svg>)\n"),
+            "{text}"
+        );
     }
 }

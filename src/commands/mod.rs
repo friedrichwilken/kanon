@@ -30,7 +30,7 @@ pub use queries::{
     QueriesSuggestOptions, QueriesSuggestOutcome, queries_accept, queries_add, queries_check,
     queries_import, queries_suggest,
 };
-pub use report::{ReportOptions, report};
+pub use report::{ReportOptions, ReportOutcome, report};
 
 /// What every command reads before it starts: the config, when there is one, and the source
 /// priorities for the mirror rule.

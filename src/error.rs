@@ -16,6 +16,7 @@ use crate::grade::GradeError;
 use crate::history::HistoryError;
 use crate::llm::LlmEnvError;
 use crate::queries::QueriesError;
+use crate::svg::SvgError;
 
 /// Errors raised by any command.
 #[derive(Debug, Error)]
@@ -71,6 +72,9 @@ pub enum CommandError {
     /// A run file could not be written or read.
     #[error(transparent)]
     History(#[from] HistoryError),
+    /// A chart file (`report --svg`) could not be written.
+    #[error(transparent)]
+    Svg(#[from] SvgError),
 }
 
 /// A page-loading failure is reported as the [`IndexError`] it has always been.

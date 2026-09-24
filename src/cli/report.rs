@@ -19,6 +19,11 @@ pub(crate) struct ReportArgs {
     /// History section, one row per run.
     #[arg(long, value_name = "DIR")]
     runs: Option<PathBuf>,
+    /// Write the charts the inputs allow as SVG files into this directory (created if
+    /// missing) and link them from the report by the path as given: recall per kind from the
+    /// result, rank movement from both results, recall over runs from `--runs`.
+    #[arg(long, value_name = "DIR")]
+    svg: Option<PathBuf>,
 }
 
 pub(crate) fn run_report(args: ReportArgs) -> Result<ExitCode> {
@@ -26,8 +31,14 @@ pub(crate) fn run_report(args: ReportArgs) -> Result<ExitCode> {
         eval_before: args.eval_before,
         eval_after: args.eval_after,
         runs: args.runs,
+        svg: args.svg,
     };
-    let text = commands::report(&options)?;
-    std::io::stdout().lock().write_all(text.as_bytes())?;
+    let outcome = commands::report(&options)?;
+    for path in outcome.charts.paths() {
+        eprintln!("wrote {}", path.display());
+    }
+    std::io::stdout()
+        .lock()
+        .write_all(outcome.text.as_bytes())?;
     Ok(ExitCode::SUCCESS)
 }

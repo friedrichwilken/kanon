@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="280" viewBox="0 0 640 280" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="12">
+<text x="44" y="18" text-anchor="start" fill="#6b7280">Recall@5 per kind</text>
+<rect x="44" y="28" width="12" height="12" fill="#3080dc"/>
+<text x="62" y="38" text-anchor="start" fill="#6b7280">tuning</text>
+<rect x="120" y="28" width="12" height="12" fill="#e2602d"/>
+<text x="138" y="38" text-anchor="start" fill="#6b7280">held-out</text>
+<line x1="44" y1="248" x2="624" y2="248" stroke="#9ca3af" stroke-width="0.5"/>
+<text x="38" y="252" text-anchor="end" fill="#6b7280">0.00</text>
+<line x1="44" y1="200" x2="624" y2="200" stroke="#9ca3af" stroke-width="0.5"/>
+<text x="38" y="204" text-anchor="end" fill="#6b7280">0.25</text>
+<line x1="44" y1="152" x2="624" y2="152" stroke="#9ca3af" stroke-width="0.5"/>
+<text x="38" y="156" text-anchor="end" fill="#6b7280">0.50</text>
+<line x1="44" y1="104" x2="624" y2="104" stroke="#9ca3af" stroke-width="0.5"/>
+<text x="38" y="108" text-anchor="end" fill="#6b7280">0.75</text>
+<line x1="44" y1="56" x2="624" y2="56" stroke="#9ca3af" stroke-width="0.5"/>
+<text x="38" y="60" text-anchor="end" fill="#6b7280">1.00</text>
+<text x="189" y="266" text-anchor="middle" fill="#6b7280">concept</text>
+<rect x="152" y="113.6" width="36" height="134.4" fill="#3080dc"><title>concept tuning: recall@5 0.700 (n = 5)</title></rect>
+<text x="170" y="109.6" text-anchor="middle" fill="#6b7280">0.70</text>
+<text x="479" y="266" text-anchor="middle" fill="#6b7280">howto</text>
+<rect x="442" y="75.2" width="36" height="172.8" fill="#3080dc"><title>howto tuning: recall@5 0.900 (n = 10)</title></rect>
+<text x="460" y="71.2" text-anchor="middle" fill="#6b7280">0.90</text>
+<rect x="480" y="113.6" width="36" height="134.4" fill="#e2602d"><title>howto held-out: recall@5 0.700 (n = 10)</title></rect>
+<text x="498" y="109.6" text-anchor="middle" fill="#6b7280">0.70</text>
+<line x1="44" y1="248" x2="624" y2="248" stroke="#9ca3af" stroke-width="1"/>
+</svg>

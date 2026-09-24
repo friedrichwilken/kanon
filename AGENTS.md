@@ -34,7 +34,8 @@ under `docs/schemas/`); it sits on pinakes alone.
 pair and the `Embedder` trait); `backend` (the `Backend` trait and `bm25`, `tantivy`, `dense`,
 `hybrid`, `external`); `grade` (replay a trail, ask the model); `queries` (grow and validate
 the judge); `report` (the evaluation sections of a Markdown report); `history` (the numbered
-run files `eval --out` writes and the rows `history` reads back).
+run files `eval --out` writes and the rows `history` reads back); `svg` (the charts
+`report --svg` writes next to the Markdown, hand-rolled SVG with no plotting dependency).
 
 **Commands:** `error` (`CommandError`), `commands` (one file per subcommand: `eval`, `embed`,
 `grade`, `queries`, `report`, `history`; options, outcome, implementation, plus `settings`,

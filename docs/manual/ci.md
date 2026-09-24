@@ -22,6 +22,12 @@ every push (found again by its first line, `<!-- kanon-eval: NAME -->`). The job
 job after the summary and the
 comment are written, so the numbers are visible on the pull request either way.
 
+The workflow does not pass `report --svg`: a job summary and a pull request comment can only
+show images that are reachable by URL, not files in the runner's workspace. To have the charts
+on the repository page, run `kanon report --svg docs/charts --runs runs ...` in a step of your
+own and commit the directory alongside the run file; the SVGs then render inline wherever the
+Markdown links them.
+
 When the baseline file does not exist yet, the run is recorded but not gated. With
 `commit_run: true` on the default branch, the new run file is committed as
 `github-actions[bot]`, and the baseline with it when the gate passed, so the baseline is always

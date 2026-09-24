@@ -81,3 +81,17 @@ jobs:
       - uses: rustsec/audit-check@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+
+  # Self-test of the reusable gate (.github/workflows/eval.yml and action.yml): the golden
+  # fixture against its committed baseline, with kanon built from this commit. Ubuntu only.
+  gate:
+    name: gate (self-test)
+    if: github.event_name != 'schedule'
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: ./.github/workflows/eval.yml
+    with:
+      kanon_version: source
+      config: tests/fixtures/golden/pinakes.yaml
+      baseline: tests/fixtures/golden/expected-baseline.json

@@ -1,0 +1,199 @@
+name: Set up kanon
+description: >-
+  Installs a kanon release for the runner's platform (verified against its sha256 sidecar),
+  or builds it from source, and adds the binary to PATH.
+
+inputs:
+  version:
+    description: >-
+      kanon version to install, without a leading "v" (e.g. "0.1.0"). "latest" (the default)
+      resolves the newest release through the GitHub releases API. "source" builds the
+      checked-out action's own commit with `cargo install --locked` (slow, always works). When
+      there is no release yet, or the release has no asset for this runner, the download falls
+      back to a source build.
+    required: false
+    default: latest
+  github-token:
+    description: >-
+      Token for the GitHub releases API when resolving "latest", to avoid the low anonymous
+      rate limit; pass the workflow token (the github.token context). Not needed to download
+      the release assets themselves, which are public. Optional.
+    required: false
+    default: ""
+
+outputs:
+  path:
+    description: Directory the kanon binary lives in (already added to PATH).
+    value: ${{ steps.path.outputs.path }}
+  version:
+    description: >-
+      The installed kanon version without a leading "v", or "source" for a source build
+      (asked for, or fallen back to).
+    value: ${{ steps.path.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    - name: Pick the release target for this runner
+      id: target
+      shell: bash
+      env:
+        RUNNER: ${{ runner.os }}-${{ runner.arch }}
+      run: |
+        case "$RUNNER" in
+          Linux-X64) target=x86_64-unknown-linux-gnu ;;
+          Linux-ARM64) target=aarch64-unknown-linux-gnu ;;
+          macOS-ARM64) target=aarch64-apple-darwin ;;
+          *) target="" ;;
+        esac
+        echo "target=$target" >> "$GITHUB_OUTPUT"
+
+    # Decides between a release download and a source build: "source" builds; "latest" asks
+    # the releases API and builds when there is no release yet; an explicit version downloads.
+    # A runner without a release build (any other OS or architecture) also builds.
+    - name: Resolve the version to install
+      id: resolve
+      shell: bash
+      env:
+        REQUESTED: ${{ inputs.version }}
+        TARGET: ${{ steps.target.outputs.target }}
+        TOKEN: ${{ inputs.github-token }}
+        RUNNER: ${{ runner.os }}-${{ runner.arch }}
+      run: |
+        mode=download
+        # A leading "v" is tolerated: "v0.1.0" and "0.1.0" are the same release.
+        version="${REQUESTED#v}"
+        if [ "$REQUESTED" = "source" ]; then
+          mode=source
+        elif [ -z "$TARGET" ]; then
+          echo "::notice::kanon has no release build for $RUNNER; building from source"
+          mode=source
+        elif [ "$version" = "latest" ]; then
+          auth=()
+          if [ -n "$TOKEN" ]; then
+            auth=(-H "Authorization: Bearer $TOKEN")
+          fi
+          body="$(curl -sSL "${auth[@]}" -H "Accept: application/vnd.github+json" \
+            -w '\n%{http_code}' https://api.github.com/repos/friedrichwilken/kanon/releases/latest)"
+          status="${body##*$'\n'}"
+          if [ "$status" = "404" ]; then
+            echo "::notice::kanon has no release yet; building from source"
+            mode=source
+          elif [ "$status" != "200" ]; then
+            echo "::error::the GitHub releases API answered $status while resolving the latest kanon release"
+            exit 1
+          else
+            tag="$(printf '%s' "${body%$'\n'*}" | jq -r '.tag_name')"
+            if [ -z "$tag" ] || [ "$tag" = "null" ]; then
+              echo "::error::could not read the latest kanon release from the GitHub API"
+              exit 1
+            fi
+            version="${tag#v}"
+          fi
+        fi
+        if [ "$mode" = "source" ]; then
+          version=source
+        fi
+        echo "mode=$mode" >> "$GITHUB_OUTPUT"
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+
+    - name: Download the release asset and its checksum
+      id: download
+      if: steps.resolve.outputs.mode == 'download'
+      shell: bash
+      env:
+        VERSION: ${{ steps.resolve.outputs.version }}
+        TARGET: ${{ steps.target.outputs.target }}
+      run: |
+        filename="kanon-${VERSION}-${TARGET}.tar.gz"
+        base="https://github.com/friedrichwilken/kanon/releases/download/v${VERSION}"
+        dir="$RUNNER_TEMP/kanon-download"
+        mkdir -p "$dir"
+        status="$(curl -sSL -o "$dir/$filename" -w '%{http_code}' "$base/$filename")"
+        if [ "$status" = "404" ]; then
+          echo "::warning::no kanon $VERSION release asset for $TARGET; building the action's own commit from source instead"
+          echo "mode=source" >> "$GITHUB_OUTPUT"
+          exit 0
+        elif [ "$status" != "200" ]; then
+          echo "::error::downloading $base/$filename answered $status"
+          exit 1
+        fi
+        # The sidecar is verified when the release has one; a release without it installs
+        # unverified, with a warning.
+        if curl -fsSL -o "$dir/$filename.sha256" "$base/$filename.sha256"; then
+          echo "verify=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "::warning::kanon $VERSION has no sha256 sidecar for $filename; installing unverified"
+          echo "verify=false" >> "$GITHUB_OUTPUT"
+        fi
+        {
+          echo "mode=download"
+          echo "dir=$dir"
+          echo "filename=$filename"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Verify the checksum
+      if: steps.download.outputs.mode == 'download' && steps.download.outputs.verify == 'true'
+      shell: bash
+      working-directory: ${{ steps.download.outputs.dir }}
+      env:
+        FILENAME: ${{ steps.download.outputs.filename }}
+      run: |
+        # The sidecar holds "<sha256>  <filename>", as sha256sum writes it.
+        if ! grep -qE "[0-9a-f]{64}  ${FILENAME}\$" "$FILENAME.sha256"; then
+          echo "::error::$FILENAME.sha256 does not name $FILENAME"
+          exit 1
+        fi
+        if [ "$(uname -s)" = "Darwin" ]; then
+          shasum -a 256 -c "$FILENAME.sha256"
+        else
+          sha256sum -c "$FILENAME.sha256"
+        fi
+
+    - name: Extract kanon
+      if: steps.download.outputs.mode == 'download'
+      shell: bash
+      env:
+        ARCHIVE: ${{ steps.download.outputs.dir }}/${{ steps.download.outputs.filename }}
+      run: |
+        dir="$RUNNER_TEMP/kanon/bin"
+        mkdir -p "$dir"
+        tar -xzf "$ARCHIVE" -C "$dir" --strip-components=1
+        test -x "$dir/kanon"
+
+    # The source build compiles the commit this action was referenced at (the whole repository
+    # is checked out into the action path), so `uses: friedrichwilken/kanon@<ref>` with
+    # `version: source` installs exactly <ref>.
+    - name: Install a Rust toolchain
+      if: steps.resolve.outputs.mode == 'source' || steps.download.outputs.mode == 'source'
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Build kanon from source
+      if: steps.resolve.outputs.mode == 'source' || steps.download.outputs.mode == 'source'
+      shell: bash
+      run: |
+        if [ -f "$GITHUB_ACTION_PATH/Cargo.toml" ]; then
+          cargo install --path "$GITHUB_ACTION_PATH" --locked --root "$RUNNER_TEMP/kanon"
+        else
+          cargo install --git https://github.com/friedrichwilken/kanon --locked --root "$RUNNER_TEMP/kanon"
+        fi
+
+    - name: Add kanon to PATH
+      id: path
+      shell: bash
+      env:
+        VERSION: ${{ steps.resolve.outputs.version }}
+        DOWNLOAD_MODE: ${{ steps.download.outputs.mode }}
+      run: |
+        dir="$RUNNER_TEMP/kanon/bin"
+        test -x "$dir/kanon"
+        echo "$dir" >> "$GITHUB_PATH"
+        # The version output says what was installed: "source" also after the fallback.
+        if [ "$DOWNLOAD_MODE" = "source" ]; then
+          VERSION=source
+        fi
+        {
+          echo "path=$dir"
+          echo "version=$VERSION"
+        } >> "$GITHUB_OUTPUT"
+        "$dir/kanon" --version

@@ -1,0 +1,266 @@
+# Reusable retrieval gate: `kanon eval --gate` on a corpus (or a serving endpoint), with the
+# before/after report as the job summary and, on a pull request, as one comment kept up to
+# date; on the default branch with `commit_run`, the run file and the baseline are committed.
+#
+# Exit codes of the job, the same as `kanon eval`'s:
+#   0  the gate passed (or there is no baseline yet: the first run only records one)
+#   2  the gate failed: tuning recall@5 dropped by more than `max_recall_drop`
+#   1  an error (no artifact, a bad query file, the endpoint did not answer, ...)
+# A failed gate fails the job, but the summary and the comment are still written first.
+#
+# The caller's `permissions` apply: `pull-requests: write` for the comment and
+# `contents: write` for `commit_run`; `contents: read` is enough for the gate itself.
+# docs/manual/ci.md shows a corpus repository and a service repository using this.
+name: kanon eval
+
+on:
+  workflow_call:
+    inputs:
+      config:
+        description: >-
+          kanon.yaml, or a pinakes.yaml whose eval: block stands in for it (kanon's --config).
+        type: string
+        default: kanon.yaml
+      artifact:
+        description: Artifact directory; empty means `artifact` next to the config.
+        type: string
+        default: ""
+      prepare:
+        description: >-
+          A shell command run before eval, in the checkout, e.g. one that produces the
+          artifact (`pinakes build`) or downloads it. Empty runs nothing.
+        type: string
+        default: ""
+      queries:
+        description: Query file; empty means the one named in the config.
+        type: string
+        default: ""
+      baseline:
+        description: >-
+          The eval result to gate against. When the file does not exist the run is not
+          gated, only recorded, so the first run on the default branch with commit_run
+          writes the baseline.
+        type: string
+        default: eval.json
+      backend:
+        description: >-
+          Retriever backend (bm25, bm25-tantivy, dense, hybrid, external); empty means
+          kanon's default, bm25.
+        type: string
+        default: ""
+      backend_url:
+        description: "The search endpoint base URL for `backend: external`."
+        type: string
+        default: ""
+      runs_dir:
+        description: The run directory `eval --out` writes to.
+        type: string
+        default: runs
+      commit_run:
+        description: >-
+          On the default branch, commit the new run file, and the baseline when the gate
+          passed, as github-actions[bot]. Needs `contents: write`.
+        type: boolean
+        default: false
+      kanon_version:
+        description: >-
+          The kanon to install: a release version, `latest`, or `source` (built from this
+          workflow's own commit).
+        type: string
+        default: latest
+      name:
+        description: >-
+          Distinguishes the comment and the summary when a workflow calls this more than
+          once (e.g. one call per backend).
+        type: string
+        default: kanon
+      runs_on:
+        description: The runner label.
+        type: string
+        default: ubuntu-latest
+
+jobs:
+  eval:
+    name: ${{ inputs.name }} eval
+    runs-on: ${{ inputs.runs_on }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # The action is taken from the commit this reusable workflow runs from (the job
+      # context names it), so the two never drift apart, and `kanon_version: source` builds
+      # exactly that commit. Without those properties (GitHub Enterprise Server), main.
+      - name: Locate kanon's action
+        id: kanon
+        env:
+          JOB: ${{ toJSON(job) }}
+        run: |
+          repository="$(jq -r '.workflow_repository // empty' <<< "$JOB")"
+          sha="$(jq -r '.workflow_sha // empty' <<< "$JOB")"
+          echo "repository=${repository:-friedrichwilken/kanon}" >> "$GITHUB_OUTPUT"
+          echo "ref=${sha:-main}" >> "$GITHUB_OUTPUT"
+          echo "KANON_OUT=$RUNNER_TEMP/kanon-eval" >> "$GITHUB_ENV"
+      - name: Check out kanon's action
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ steps.kanon.outputs.repository }}
+          ref: ${{ steps.kanon.outputs.ref }}
+          path: .kanon
+          persist-credentials: false
+      - name: Set up kanon
+        uses: ./.kanon
+        with:
+          version: ${{ inputs.kanon_version }}
+          github-token: ${{ github.token }}
+      - name: Remove the action checkout
+        run: rm -rf .kanon
+
+      - name: Prepare
+        if: inputs.prepare != ''
+        run: ${{ inputs.prepare }}
+
+      # Never fails: the exit code is an output, and the last step turns it into the job's.
+      - name: Eval
+        id: eval
+        env:
+          CONFIG: ${{ inputs.config }}
+          ARTIFACT: ${{ inputs.artifact }}
+          QUERIES: ${{ inputs.queries }}
+          BASELINE: ${{ inputs.baseline }}
+          BACKEND: ${{ inputs.backend }}
+          BACKEND_URL: ${{ inputs.backend_url }}
+          RUNS_DIR: ${{ inputs.runs_dir }}
+        run: |
+          mkdir -p "$KANON_OUT"
+          args=(--config "$CONFIG" eval --json "$KANON_OUT/eval.json" --out "$RUNS_DIR")
+          if [ -n "$ARTIFACT" ]; then args+=(--artifact "$ARTIFACT"); fi
+          if [ -n "$QUERIES" ]; then args+=(--queries "$QUERIES"); fi
+          if [ -n "$BACKEND" ]; then args+=(--backend "$BACKEND"); fi
+          if [ -n "$BACKEND_URL" ]; then args+=(--backend-url "$BACKEND_URL"); fi
+          gated=false
+          if [ -f "$BASELINE" ]; then
+            args+=(--gate "$BASELINE")
+            gated=true
+          else
+            echo "::notice::no baseline at $BASELINE: this run is recorded, not gated"
+          fi
+          echo "kanon ${args[*]}"
+          set +e
+          kanon "${args[@]}" 2>&1 | tee "$KANON_OUT/eval.log"
+          code=${PIPESTATUS[0]}
+          set -e
+          run_file="$(sed -n 's/^wrote //p' "$KANON_OUT/eval.log" | tail -n 1)"
+          case "$run_file" in
+            "$RUNS_DIR"/*.json) test -f "$run_file" || run_file="" ;;
+            *) run_file="" ;;
+          esac
+          {
+            echo "code=$code"
+            echo "gated=$gated"
+            echo "run_file=$run_file"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Write the summary
+        id: summary
+        env:
+          NAME: ${{ inputs.name }}
+          CODE: ${{ steps.eval.outputs.code }}
+          GATED: ${{ steps.eval.outputs.gated }}
+          BASELINE: ${{ inputs.baseline }}
+          RUNS_DIR: ${{ inputs.runs_dir }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          summary="$KANON_OUT/summary.md"
+          {
+            echo "<!-- kanon-eval: $NAME -->"
+            case "$CODE" in
+              0)
+                if [ "$GATED" = "true" ]; then
+                  echo "# Retrieval gate: passed"
+                else
+                  echo "# Retrieval gate: no baseline, run recorded"
+                fi
+                ;;
+              2) echo "# Retrieval gate: FAILED" ;;
+              *) echo "# Retrieval gate: error (exit $CODE)" ;;
+            esac
+            echo
+            if grep -q '^gate' "$KANON_OUT/eval.log"; then
+              echo '```text'
+              grep '^gate' "$KANON_OUT/eval.log"
+              echo '```'
+              echo
+            fi
+            if [ -f "$KANON_OUT/eval.json" ]; then
+              report=(report --eval-after "$KANON_OUT/eval.json")
+              if [ "$GATED" = "true" ]; then report+=(--eval-before "$BASELINE"); fi
+              if [ -d "$RUNS_DIR" ]; then report+=(--runs "$RUNS_DIR"); fi
+              # The report's own title (and the blank line after it) gives way to the verdict.
+              kanon "${report[@]}" | sed '1{/^# Retrieval report$/{N;d;};}'
+            else
+              echo '```text'
+              cat "$KANON_OUT/eval.log"
+              echo '```'
+            fi
+            echo
+            echo "<sub>kanon eval ($NAME) at ${GITHUB_SHA:0:7}, [run]($RUN_URL)</sub>"
+          } > "$summary"
+          cat "$summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "path=$summary" >> "$GITHUB_OUTPUT"
+
+      # One comment per pull request and name, found again by its first line.
+      - name: Comment on the pull request
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NAME: ${{ inputs.name }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          SUMMARY: ${{ steps.summary.outputs.path }}
+        run: |
+          marker="<!-- kanon-eval: $NAME -->"
+          id="$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
+            --jq ".[] | select(.body | startswith(\"$marker\")) | .id" | sed -n 1p)"
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$id" -F body=@"$SUMMARY" --silent
+          else
+            gh api -X POST "repos/$REPO/issues/$PR/comments" -F body=@"$SUMMARY" --silent
+          fi || echo "::warning::could not post the summary as a pull request comment; the caller needs pull-requests: write"
+
+      # The run file records every run on the default branch, a failed gate included; the
+      # baseline moves only when the gate passed, so it is always the last passing run.
+      - name: Commit the run file and the baseline
+        if: >-
+          inputs.commit_run
+          && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+          && steps.eval.outputs.run_file != ''
+        env:
+          CODE: ${{ steps.eval.outputs.code }}
+          RUN_FILE: ${{ steps.eval.outputs.run_file }}
+          BASELINE: ${{ inputs.baseline }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- "$RUN_FILE"
+          if [ "$CODE" = "0" ]; then
+            cp "$KANON_OUT/eval.json" "$BASELINE"
+            git add -- "$BASELINE"
+          fi
+          if git diff --cached --quiet; then
+            echo "nothing to commit"
+            exit 0
+          fi
+          git commit -m "kanon: record run $(basename "$RUN_FILE" .json)" \
+            -m "$(grep '^gate' "$KANON_OUT/eval.log" || echo "no baseline: first run")"
+          git push || (git pull --rebase && git push)
+
+      - name: Fail on the gate
+        if: steps.eval.outputs.code != '0'
+        env:
+          CODE: ${{ steps.eval.outputs.code }}
+        run: |
+          if [ "$CODE" = "2" ]; then
+            echo "::error::kanon gate failed: $(grep '^gate' "$KANON_OUT/eval.log" || true)"
+          else
+            echo "::error::kanon eval failed (exit $CODE)"
+          fi
+          exit "$CODE"

@@ -82,6 +82,15 @@ appends the rows you want, checked against the manifest like any other row. Sugg
 quote the page title are dropped before you see them, and the accepted rows keep
 `"origin": "suggested"`, so `eval`'s per-query rows tell generated queries from real ones.
 
+## Gate a pull request
+
+The reusable workflow `friedrichwilken/kanon/.github/workflows/eval.yml@main` runs
+`eval --gate` on every pull request, writes the before/after report as the job summary and as
+one comment, and with `commit_run: true` commits the run file (and a passing baseline) on the
+default branch; the job exits 0, 2 or 1 like `eval`. It measures the reference index, or a
+deployed service with `backend: external` and a `backend_url`. `uses: friedrichwilken/kanon@main`
+installs the binary alone. Both are in [docs/manual/ci.md](docs/manual/ci.md).
+
 ## Licence
 
 Apache-2.0.

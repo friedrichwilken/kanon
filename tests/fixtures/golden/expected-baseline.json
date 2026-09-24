@@ -1,0 +1,244 @@
+{
+  "tuning": {
+    "overall": {
+      "recall@5": 0.9166666666666666,
+      "recall@10": 0.9166666666666666,
+      "mrr": 0.9166666666666666,
+      "n": 12
+    },
+    "per_kind": {
+      "concept": {
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "n": 1
+      },
+      "howto": {
+        "recall@5": 0.8,
+        "recall@10": 0.8,
+        "mrr": 0.8,
+        "n": 5
+      },
+      "reference": {
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "n": 4
+      },
+      "troubleshooting": {
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "n": 2
+      }
+    }
+  },
+  "holdout": {
+    "overall": {
+      "recall@5": 1.0,
+      "recall@10": 1.0,
+      "mrr": 1.0,
+      "n": 2
+    },
+    "per_kind": {
+      "howto": {
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr": 1.0,
+        "n": 2
+      }
+    }
+  },
+  "queries": [
+    {
+      "id": "install",
+      "kind": "howto",
+      "holdout": false,
+      "hit5": true,
+      "hit10": true,
+      "rr": 1.0,
+      "top": [
+        "handbook::docs/install.md",
+        "handbook::docs/getting-started.md",
+        "handbook::docs/uninstall.md",
+        "handbook::docs/configuration.md",
+        "handbook::docs/tutorials/backup-restore.md",
+        "cookbook::docs/README.md",
+        "handbook::docs/tutorials/first-project.md",
+        "cookbook::docs/recipes/export-csv.md",
+        "handbook::docs/upgrade.md",
+        "cookbook::docs/recipes/cron-jobs.md"
+      ]
+    },
+    {
+      "id": "backup",
+      "kind": "howto",
+      "holdout": false,
+      "hit5": true,
+      "hit10": true,
+      "rr": 1.0,
+      "top": [
+        "handbook::docs/tutorials/backup-restore.md",
+        "handbook::docs/upgrade.md",
+        "guides::docs/migrate-v2.md",
+        "guides::docs/set-up-tls.md",
+        "handbook::docs/concepts/architecture.md",
+        "handbook::docs/troubleshooting/startup-failures.md"
+      ]
+    },
+    {
+      "id": "tls-port",
+      "kind": "reference",
+      "holdout": false,
+      "hit5": true,
+      "hit10": true,
+      "rr": 1.0,
+      "top": [
+        "handbook::docs/configuration.md",
+        "guides::docs/set-up-tls.md",
+        "handbook::docs/reference/config-keys.md",
+        "handbook::docs/install.md",
+        "handbook::docs/concepts/networking.md",
+        "handbook::docs/troubleshooting/startup-failures.md"
+      ]
+    },
+    {
+      "id": "rotate-keys",
+      "kind": "howto",
+      "holdout": false,
+      "hit5": true,
+      "hit10": true,
+      "rr": 1.0,
+      "top": [
+        "guides::docs/rotate-keys.md",
+        "handbook::docs/reference/config-keys.md",
+        "handbook::docs/reference/cli.md",
+        "handbook::docs/configuration.md"
+      ]
+    },
+    {
+      "id": "caching",
+      "kind": "howto",
+      "holdout": false,
+      "hit5": true,
+      "hit10": true,
+      "rr": 1.0,
+      "top": [
+        "guides::docs/enable-caching.md",
+        "cookbook::docs/recipes/rate-limiting.md"
+      ]
+    },
+    {
+      "id": "quota",
+      "kind": "reference",
+      "holdout": false,
+      "hit5": true,
+      "hit10": true,
+      "rr": 1.0,
+      "top": [
+        "guides::docs/quota-limits.md"
+      ]
+    },
+    {
+      "id": "startup",
+      "kind": "troubleshooting",
+      "holdout": false,
+      "hit5": true,
+      "hit10": true,
+      "rr": 1.0,
+      "top": [
+        "handbook::docs/troubleshooting/startup-failures.md",
+        "handbook::docs/upgrade.md",
+        "handbook::docs/configuration.md",
+        "handbook::docs/tutorials/backup-restore.md",
+        "handbook::docs/install.md",
+        "cookbook::docs/README.md",
+        "handbook::docs/getting-started.md",
+        "handbook::docs/tutorials/first-project.md",
+        "cookbook::docs/recipes/export-csv.md",
+        "cookbook::docs/recipes/cron-jobs.md"
+      ]
+    },
+    {
+      "id": "slow",
+      "kind": "troubleshooting",
+      "holdout": false,
+      "hit5": true,
+      "hit10": true,
+      "rr": 1.0,
+      "top": [
+        "handbook::docs/troubleshooting/slow-queries.md"
+      ]
+    },
+    {
+      "id": "architecture",
+      "kind": "concept",
+      "holdout": false,
+      "hit5": true,
+      "hit10": true,
+      "rr": 1.0,
+      "top": [
+        "handbook::docs/concepts/architecture.md"
+      ]
+    },
+    {
+      "id": "plugin",
+      "kind": "howto",
+      "holdout": false,
+      "hit5": false,
+      "hit10": false,
+      "rr": 0.0,
+      "top": [
+        "handbook::docs/concepts/architecture.md"
+      ]
+    },
+    {
+      "id": "crd-sink-field",
+      "kind": "reference",
+      "holdout": false,
+      "hit5": true,
+      "hit10": true,
+      "rr": 1.0,
+      "top": [
+        "schemas::reference/messaging.example.com/subscription-v1.md"
+      ]
+    },
+    {
+      "id": "crd-type-matching-field",
+      "kind": "reference",
+      "holdout": false,
+      "hit5": true,
+      "hit10": true,
+      "rr": 1.0,
+      "top": [
+        "schemas::reference/messaging.example.com/subscription-v1.md"
+      ]
+    },
+    {
+      "id": "webhooks",
+      "kind": "howto",
+      "holdout": true,
+      "hit5": true,
+      "hit10": true,
+      "rr": 1.0,
+      "top": [
+        "cookbook::docs/recipes/webhooks.md",
+        "handbook::docs/concepts/notifications.md",
+        "cookbook::docs/recipes/notification-templates.md",
+        "schemas::reference/messaging.example.com/subscription-v1.md"
+      ]
+    },
+    {
+      "id": "metrics",
+      "kind": "howto",
+      "holdout": true,
+      "hit5": true,
+      "hit10": true,
+      "rr": 1.0,
+      "top": [
+        "guides::docs/monitor-metrics.md",
+        "cookbook::docs/recipes/export-csv.md"
+      ]
+    }
+  ]
+}

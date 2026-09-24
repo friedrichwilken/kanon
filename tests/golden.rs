@@ -8,7 +8,9 @@
 //! identifier-compound tokeniser rule, and a near-duplicate pair for
 //! `tests/duplicates.rs`; `queries.jsonl` holds fourteen queries, two of them held out. The
 //! expected metrics are whatever the implementation yields, pinned in
-//! `expected.json`. After an intended change to the index, refresh the file with
+//! `expected.json`; `expected-baseline.json` is the plain result alone, as `eval --json`
+//! writes it, the baseline the self-test gate in `ci.yml` measures the fixture against.
+//! After an intended change to the index, refresh both files with
 //! `UPDATE_GOLDEN=1 cargo test --test golden` and review the diff.
 
 use std::path::{Path, PathBuf};
@@ -64,6 +66,18 @@ fn golden_corpus_metrics_are_pinned() {
     assert_eq!(
         text, expected,
         "golden result changed; run `UPDATE_GOLDEN=1 cargo test --test golden` if intended"
+    );
+
+    // The committed baseline for the CI self-test gate is the plain result on its own.
+    let baseline_path = fixture().join("expected-baseline.json");
+    let baseline = plain.summary.to_json().unwrap();
+    if std::env::var_os("UPDATE_GOLDEN").is_some() {
+        std::fs::write(&baseline_path, &baseline).unwrap();
+    }
+    assert_eq!(
+        baseline,
+        std::fs::read_to_string(&baseline_path).expect("expected-baseline.json exists"),
+        "the self-test baseline changed; run `UPDATE_GOLDEN=1 cargo test --test golden` if intended"
     );
 
     // Structural facts about the fixture that the pinned numbers rest on. The fixture carries

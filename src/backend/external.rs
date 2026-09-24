@@ -110,7 +110,8 @@ impl Backend for ExternalBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::testing::{fixture_pages, read_http_request};
+    use crate::backend::testing::fixture_pages;
+    use crate::testing::read_http_request;
 
     #[test]
     fn external_backend_sends_the_request_and_parses_the_response() {

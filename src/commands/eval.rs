@@ -442,7 +442,7 @@ impl BackendFlags {
     }
 
     /// Whether none of the flags was given.
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         *self == BackendFlags::default()
     }
 }

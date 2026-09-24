@@ -1,5 +1,6 @@
 //! Test fixtures shared by more than one module's tests: a synthetic artifact writer, a
-//! workspace around it, a fake embedder and an environment lock.
+//! workspace around it, a fake embedder, an environment lock and a one-request HTTP server
+//! reader.
 
 use std::fs;
 use std::path::Path;
@@ -148,4 +149,46 @@ pub(crate) fn manifest_workspace() -> (tempfile::TempDir, Paths) {
     );
     manifest.save(&paths.manifest).unwrap();
     (dir, paths)
+}
+
+/// Read one HTTP/1.1 request off `stream`, answering `Expect: 100-continue` (which ureq
+/// sends before a request body) so the client proceeds to send it, then returning headers
+/// and body as one string once `Content-Length` bytes of body have arrived.
+pub(crate) fn read_http_request(stream: &mut std::net::TcpStream) -> String {
+    use std::io::{Read as _, Write as _};
+
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 4096];
+    let mut answered_continue = false;
+    loop {
+        let n = stream.read(&mut chunk).unwrap();
+        assert!(n > 0, "connection closed before a full request arrived");
+        buf.extend_from_slice(&chunk[..n]);
+        let Some(header_end) = find_subslice(&buf, b"\r\n\r\n") else {
+            continue;
+        };
+        let headers = String::from_utf8_lossy(&buf[..header_end]).into_owned();
+        if !answered_continue && headers.to_lowercase().contains("expect: 100-continue") {
+            stream.write_all(b"HTTP/1.1 100 Continue\r\n\r\n").unwrap();
+            answered_continue = true;
+        }
+        let content_length = headers
+            .lines()
+            .find_map(|line| {
+                line.to_lowercase()
+                    .strip_prefix("content-length:")
+                    .map(str::trim)
+                    .map(str::to_string)
+            })
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(0);
+        let body_start = header_end + 4;
+        if buf.len() - body_start >= content_length {
+            return String::from_utf8_lossy(&buf).into_owned();
+        }
+    }
+}
+
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack.windows(needle.len()).position(|w| w == needle)
 }

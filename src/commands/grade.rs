@@ -108,9 +108,8 @@ mod tests {
 
     use super::*;
     use crate::backend::BackendError;
-    use crate::backend::testing::read_http_request;
     use crate::contracts::{BACKEND_VERSION, SearchHit, SearchResponse};
-    use crate::testing::{eval_workspace, with_llm_url};
+    use crate::testing::{eval_workspace, read_http_request, with_llm_url};
     use pinakes::llm::testing::{Scripted, ScriptedTransport, completion};
 
     const PAGE_ID: &str = "handbook::docs/user/README.md";

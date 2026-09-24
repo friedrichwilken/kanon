@@ -1,13 +1,15 @@
-//! `kanon queries add`, `queries check` and `queries import`: growing and validating
-//! `queries.jsonl`.
+//! `kanon queries add`, `queries check`, `queries import` and `queries suggest`: growing and
+//! validating `queries.jsonl`.
 //!
 //! `add` appends one row after checking that every `expected` entry names at least one page in
 //! the manifest; the legacy `<source>/<path>` form (no `::`) is normalised to the canonical
 //! `<source>::<path>` form, or `<source>::<path>/` when it only matches pages as a directory
-//! prefix. `check` re-validates the whole file: unknown expected ids, duplicate query ids, and
-//! the held-out share against `holdout_min`. `import` turns `kanon grade`'s
-//! `graded.jsonl` into query rows, one per distinct query, `expected` being the ids graded at
-//! or above a threshold.
+//! prefix. `add --from suggestions.jsonl --accept ID…` appends chosen rows of a suggestions
+//! file through the same check, keeping their `origin`. `check` re-validates the whole file:
+//! unknown expected ids, duplicate query ids, and the held-out share against `holdout_min`.
+//! `import` turns `kanon grade`'s `graded.jsonl` into query rows, one per distinct query,
+//! `expected` being the ids graded at or above a threshold. [`suggest`] asks a model for
+//! questions a sample of pages answers, for a human to accept.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -18,9 +20,13 @@ use thiserror::Error;
 use crate::eval::{self, Query};
 use crate::grade::GradedRow;
 use crate::num::float;
+use crate::rng::SplitMix64;
 use pinakes::jsonl::{self, JsonlError, KeyOrder};
+use pinakes::llm::ChatError;
 use pinakes::manifest::{self, Manifest};
 use pinakes::text::sha256_hex;
+
+pub mod suggest;
 
 pub use crate::config::DEFAULT_HOLDOUT_MIN;
 
@@ -45,6 +51,12 @@ pub enum QueriesError {
     /// An `expected` entry names no page in the manifest.
     #[error("expected {0:?} matches no page in the manifest")]
     UnknownExpected(String),
+    /// `--accept` named an id that is not in the suggestions file.
+    #[error("--accept {0:?} names no row in the suggestions file")]
+    UnknownSuggestion(String),
+    /// Talking to the model failed (`queries suggest`).
+    #[error(transparent)]
+    Llm(#[from] ChatError),
 }
 
 /// A row to append with `queries add`, before its `expected` ids are normalised.
@@ -60,6 +72,9 @@ pub struct NewQuery {
     pub kind: String,
     /// Held out from tuning decisions.
     pub holdout: bool,
+    /// Provenance kept on the row (`"suggested"` for an accepted suggestion), `None` for a
+    /// hand-written one.
+    pub origin: Option<String>,
 }
 
 /// Normalise one `expected` entry against `manifest`, erroring when it matches no page.
@@ -95,24 +110,37 @@ pub fn normalize_expected(expected: &str, manifest: &Manifest) -> Result<String,
 
 /// Append one row to `path`, normalising and validating `expected` against `manifest` first.
 pub fn add(path: &Path, manifest: &Manifest, new: &NewQuery) -> Result<Query, QueriesError> {
-    let expected = new
-        .expected
-        .iter()
-        .map(|entry| normalize_expected(entry, manifest))
-        .collect::<Result<Vec<_>, _>>()?;
-    let query = Query {
-        id: new.id.clone(),
-        query: new.query.clone(),
-        expected,
-        kind: new.kind.clone(),
-        holdout: new.holdout,
-    };
-    append(path, &query)?;
-    Ok(query)
+    let mut rows = add_all(path, manifest, std::slice::from_ref(new))?;
+    Ok(rows.remove(0))
 }
 
-fn append(path: &Path, query: &Query) -> Result<(), QueriesError> {
-    jsonl::append(path, &[query], KeyOrder::Declared).map_err(jsonl_error)
+/// Append every row to `path`, normalising and validating each one's `expected` against
+/// `manifest` first: nothing is written when any row fails.
+pub fn add_all(
+    path: &Path,
+    manifest: &Manifest,
+    new: &[NewQuery],
+) -> Result<Vec<Query>, QueriesError> {
+    let rows = new
+        .iter()
+        .map(|new| {
+            let expected = new
+                .expected
+                .iter()
+                .map(|entry| normalize_expected(entry, manifest))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(Query {
+                id: new.id.clone(),
+                query: new.query.clone(),
+                expected,
+                kind: new.kind.clone(),
+                holdout: new.holdout,
+                origin: new.origin.clone(),
+            })
+        })
+        .collect::<Result<Vec<_>, QueriesError>>()?;
+    jsonl::append(path, &rows, KeyOrder::Declared).map_err(jsonl_error)?;
+    Ok(rows)
 }
 
 fn jsonl_error(err: JsonlError) -> QueriesError {
@@ -204,34 +232,10 @@ pub struct GradedQuery {
     pub by: String,
 }
 
-/// A tiny deterministic PRNG (`splitmix64`) so `queries import --seed` needs no extra
-/// dependency.
-struct SplitMix64(u64);
-
-impl SplitMix64 {
-    fn new(seed: u64) -> SplitMix64 {
-        SplitMix64(seed)
-    }
-
-    fn next_u64(&mut self) -> u64 {
-        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        let mut z = self.0;
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        z ^ (z >> 31)
-    }
-
-    /// A uniform float in `[0, 1)`.
-    #[allow(clippy::cast_precision_loss)]
-    fn next_f64(&mut self) -> f64 {
-        (self.next_u64() >> 11) as f64 / (1u64 << 53) as f64
-    }
-}
-
 /// A short, stable, human-scannable id for a query: a slug of its text plus a hash suffix so
-/// two different queries that slugify the same never collide, and so re-importing the same
-/// query text always produces the same id.
-fn query_id(query: &str) -> String {
+/// two different queries that slugify the same never collide, and so importing or suggesting
+/// the same query text always produces the same id.
+pub fn query_id(query: &str) -> String {
     let mut slug = String::new();
     let mut last_dash = false;
     for ch in query.to_lowercase().chars() {
@@ -395,22 +399,29 @@ mod tests {
             expected: vec!["handbook/docs/user/caching.md".to_string()],
             kind: "howto".to_string(),
             holdout: false,
+            origin: None,
         };
         let query = add(&path, &m, &new).unwrap();
         assert_eq!(query.expected, ["handbook::docs/user/caching.md"]);
         let loaded = eval::load_queries(&path).unwrap();
         assert_eq!(loaded, [query]);
+        // A row without an origin carries no `origin` key at all.
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("origin"), "{text}");
 
-        // A second row appends rather than overwriting.
+        // A second row appends rather than overwriting; its origin is kept.
         let new2 = NewQuery {
             id: "quotas".to_string(),
             query: "quotas".to_string(),
             expected: vec!["handbook::docs/user/".to_string()],
             kind: String::new(),
             holdout: true,
+            origin: Some("suggested".to_string()),
         };
         add(&path, &m, &new2).unwrap();
-        assert_eq!(eval::load_queries(&path).unwrap().len(), 2);
+        let loaded = eval::load_queries(&path).unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[1].origin.as_deref(), Some("suggested"));
 
         // An unknown expected id is rejected before anything is written.
         let bad = NewQuery {
@@ -419,9 +430,17 @@ mod tests {
             expected: vec!["handbook::missing.md".to_string()],
             kind: String::new(),
             holdout: false,
+            origin: None,
         };
         assert!(add(&path, &m, &bad).is_err());
         assert_eq!(eval::load_queries(&path).unwrap().len(), 2, "not appended");
+
+        // add_all is all or nothing: one bad row in a batch and none of it is appended.
+        let err = add_all(&path, &m, &[new.clone(), bad]).unwrap_err();
+        assert!(matches!(err, QueriesError::UnknownExpected(_)));
+        assert_eq!(eval::load_queries(&path).unwrap().len(), 2, "not appended");
+        assert_eq!(add_all(&path, &m, &[new.clone(), new]).unwrap().len(), 2);
+        assert_eq!(eval::load_queries(&path).unwrap().len(), 4);
     }
 
     fn query(id: &str, expected: &[&str], holdout: bool) -> Query {
@@ -431,6 +450,7 @@ mod tests {
             expected: expected.iter().map(|s| (*s).to_string()).collect(),
             kind: String::new(),
             holdout,
+            origin: None,
         }
     }
 

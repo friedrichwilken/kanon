@@ -74,6 +74,14 @@ manifest and query-set hashes and the time inside. `kanon history` lists those r
 Markdown table (`--json OUT` for the rows as JSON), and `report --runs runs/` adds the same
 table as a History section. Commit the directory and the numbers have a series.
 
+No query set yet? `kanon queries suggest --n 50` samples pages across every source and section,
+asks the model at `KANON_LLM_URL` for two or three questions each page answers, and writes them
+to `suggestions.jsonl` with the page as the expected id. It never touches `queries.jsonl`: read
+the file, then `kanon queries add --from suggestions.jsonl --accept ID...` (or `--accept-all`)
+appends the rows you want, checked against the manifest like any other row. Suggestions that
+quote the page title are dropped before you see them, and the accepted rows keep
+`"origin": "suggested"`, so `eval`'s per-query rows tell generated queries from real ones.
+
 ## Licence
 
 Apache-2.0.

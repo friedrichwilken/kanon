@@ -82,6 +82,11 @@ pub struct Query {
     /// Held out from tuning decisions.
     #[serde(default)]
     pub holdout: bool,
+    /// Where the row came from: `"suggested"` for a row accepted from `queries suggest`, absent
+    /// for a hand-written one. Left out of the JSON when absent, so rows written before the
+    /// field existed round-trip byte for byte.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
 }
 
 /// Read `queries.jsonl`; blank lines are skipped.
@@ -182,6 +187,10 @@ pub struct QueryResult {
     /// Whether the query is held out from tuning.
     #[serde(default)]
     pub holdout: bool,
+    /// The query's `origin` (`"suggested"` for an accepted suggestion), so a reader can tell
+    /// generated queries from real ones; left out when the query has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
     /// An expected page was in the top 5.
     pub hit5: bool,
     /// An expected page was in the top 10.
@@ -203,6 +212,7 @@ impl QueryResult {
             id: query.id.clone(),
             kind: query.kind.clone(),
             holdout: query.holdout,
+            origin: query.origin.clone(),
             hit5: rank.is_some_and(|r| r < 5),
             hit10: rank.is_some_and(|r| r < k.min(10)),
             rr: rank.map_or(0.0, |r| 1.0 / float(r + 1)),
@@ -553,6 +563,7 @@ mod tests {
             expected: vec!["s::docs/".into()],
             kind: "howto".into(),
             holdout: true,
+            origin: Some("suggested".into()),
         };
         let top: Vec<String> = (0..12).map(|i| format!("s::other/{i}.md")).collect();
         let miss = QueryResult::score(&query, top.clone(), 12);
@@ -562,6 +573,7 @@ mod tests {
         let row = QueryResult::score(&query, hit.clone(), 12);
         assert!(!row.hit5 && row.hit10 && (row.rr - 0.125).abs() < 1e-12);
         assert!(row.holdout && row.kind == "howto" && row.top.len() == 12);
+        assert_eq!(row.origin.as_deref(), Some("suggested"));
         let mut late = top;
         late[10] = "s::docs/x.md".into();
         let row = QueryResult::score(&query, late, 12);

@@ -7,10 +7,11 @@
 //!
 //! Four modules depend on nothing else in the crate: [`config`] (`kanon.yaml`, or the `eval:`
 //! block of `pinakes.yaml`), [`workspace`] ([`workspace::Paths`], the file locations every
-//! command uses), `env` (`KANON_*` variables with a `PINAKES_*` fallback) and `num` (the one
-//! `usize -> f64` cast); [`llm`] (the model endpoint from the environment) sits on `env`.
-//! [`contracts`] sits on pinakes alone: the serde types of the backend contract, the trail and
-//! the unit, with their versions, that every reader and writer of those documents goes through.
+//! command uses), `env` (`KANON_*` variables with a `PINAKES_*` fallback), `num` (the one
+//! `usize -> f64` cast) and `rng` (the one seeded PRNG); [`llm`] (the model endpoint from the
+//! environment) sits on `env`. [`contracts`] sits on pinakes alone: the serde types of the
+//! backend contract, the trail and the unit, with their versions, that every reader and writer
+//! of those documents goes through.
 //!
 //! [`eval`] is the judge (`queries.jsonl`), the metrics and the result file; [`embed`] writes
 //! and reads the embeddings file pair; [`backend`] is the [`backend::Backend`] trait and its
@@ -37,6 +38,7 @@ pub mod llm;
 mod num;
 pub mod queries;
 pub mod report;
+mod rng;
 #[cfg(test)]
 pub(crate) mod testing;
 pub mod workspace;

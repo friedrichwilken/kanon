@@ -1,4 +1,4 @@
-//! The model endpoint `grade` talks to: [`pinakes::llm`]'s OpenAI-compatible chat client,
+//! The model endpoint `grade` and `queries suggest` talk to: [`pinakes::llm`]'s OpenAI-compatible chat client,
 //! configured from `KANON_LLM_URL`, `KANON_LLM_KEY` and `KANON_LLM_MODEL` (the `PINAKES_LLM_*`
 //! names are accepted as a fallback).
 
@@ -9,7 +9,10 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum LlmEnvError {
     /// `KANON_LLM_URL` is not set.
-    #[error("KANON_LLM_URL is not set: grade needs an OpenAI-compatible chat completions endpoint")]
+    #[error(
+        "KANON_LLM_URL is not set: grade and queries suggest need an OpenAI-compatible chat \
+         completions endpoint"
+    )]
     MissingUrl,
     /// Neither `--model` nor `KANON_LLM_MODEL` is set.
     #[error("no model given: pass --model or set KANON_LLM_MODEL")]

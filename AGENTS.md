@@ -23,7 +23,7 @@ belongs in git: a query set, a run, a gate, a report.
 
 **Depend on nothing else in the crate:** `config` (`kanon.yaml`, or the `eval:` block of
 `pinakes.yaml`, and source priorities read from `pinakes.yaml`), `workspace` (`Paths`), `env`
-(`KANON_*` with a `PINAKES_*` fallback) and `num`. `llm` (the model endpoint from
+(`KANON_*` with a `PINAKES_*` fallback), `num` and `rng`. `llm` (the model endpoint from
 `KANON_LLM_*`) sits on `env`.
 
 **Contracts:** `contracts` (the versioned serde types of the backend contract, the trail and

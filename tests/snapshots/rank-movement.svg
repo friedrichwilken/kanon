@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="180" viewBox="0 0 640 180" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="12">
+<text x="16" y="18" text-anchor="start" fill="#6b7280">Rank of the first expected hit, before → after</text>
+<rect x="16" y="28" width="12" height="12" fill="#3080dc"/>
+<text x="34" y="38" text-anchor="start" fill="#6b7280">better</text>
+<rect x="92" y="28" width="12" height="12" fill="#d03b3b"/>
+<text x="110" y="38" text-anchor="start" fill="#6b7280">worse</text>
+<rect x="161" y="28" width="12" height="12" fill="#9ca3af"/>
+<text x="179" y="38" text-anchor="start" fill="#6b7280">unchanged</text>
+<line x1="168.2" y1="56" x2="168.2" y2="168" stroke="#9ca3af" stroke-width="0.5"/>
+<text x="168.2" y="52" text-anchor="middle" fill="#6b7280">1</text>
+<line x1="314.1" y1="56" x2="314.1" y2="168" stroke="#9ca3af" stroke-width="0.5"/>
+<text x="314.1" y="52" text-anchor="middle" fill="#6b7280">5</text>
+<line x1="496.4" y1="56" x2="496.4" y2="168" stroke="#9ca3af" stroke-width="0.5"/>
+<text x="496.4" y="52" text-anchor="middle" fill="#6b7280">10</text>
+<line x1="605.8" y1="56" x2="605.8" y2="168" stroke="#9ca3af" stroke-width="0.5"/>
+<text x="605.8" y="52" text-anchor="middle" fill="#6b7280">miss</text>
+<text x="142" y="73" text-anchor="end" fill="#6b7280">quotas</text>
+<path d="M569.3 69 L210.7 69" stroke="#3080dc" fill="none" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><title>quotas: 12 → 2</title></path>
+<circle cx="569.3" cy="69" r="3" fill="#3080dc"><title>quotas: 12 → 2</title></circle>
+<path d="M204.7 69 L210.7 65 L210.7 73 Z" stroke="#3080dc" fill="#3080dc" stroke-width="1" stroke-linejoin="round" stroke-linecap="round"><title>quotas: 12 → 2</title></path>
+<text x="142" y="91" text-anchor="end" fill="#6b7280">labels</text>
+<path d="M605.8 87 L393 87" stroke="#3080dc" fill="none" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><title>labels: miss → 7</title></path>
+<circle cx="605.8" cy="87" r="3" fill="#3080dc"><title>labels: miss → 7</title></circle>
+<path d="M387 87 L393 83 L393 91 Z" stroke="#3080dc" fill="#3080dc" stroke-width="1" stroke-linejoin="round" stroke-linecap="round"><title>labels: miss → 7</title></path>
+<text x="142" y="109" text-anchor="end" fill="#6b7280">added</text>
+<circle cx="277.6" cy="105" r="3" fill="#9ca3af"><title>added: not evaluated → 4</title></circle>
+<text x="142" y="127" text-anchor="end" fill="#6b7280">caching</text>
+<circle cx="168.2" cy="123" r="3" fill="#9ca3af"><title>caching: 1 → 1</title></circle>
+<text x="142" y="145" text-anchor="end" fill="#6b7280">dropped</text>
+<circle cx="241.2" cy="141" r="3" fill="#9ca3af"><title>dropped: 3 → not evaluated</title></circle>
+<text x="142" y="163" text-anchor="end" fill="#6b7280">retention</text>
+<path d="M204.7 159 L599.8 159" stroke="#d03b3b" fill="none" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><title>retention: 2 → miss</title></path>
+<circle cx="204.7" cy="159" r="3" fill="#d03b3b"><title>retention: 2 → miss</title></circle>
+<path d="M605.8 159 L599.8 155 L599.8 163 Z" stroke="#d03b3b" fill="#d03b3b" stroke-width="1" stroke-linejoin="round" stroke-linecap="round"><title>retention: 2 → miss</title></path>
+</svg>

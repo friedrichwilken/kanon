@@ -86,9 +86,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # The action is taken from the commit this reusable workflow runs from (the job
-      # context names it), so the two never drift apart, and `kanon_version: source` builds
-      # exactly that commit. Without those properties (GitHub Enterprise Server), main.
+      # The action is taken from the commit this reusable workflow runs from, so the two
+      # never drift apart, and `kanon_version: source` builds exactly that commit. The job
+      # context's `workflow_repository` and `workflow_sha` name it; they are recent, absent
+      # on GitHub Enterprise Server and unknown to actionlint, hence `toJSON(job)` and the
+      # fallback to main.
       - name: Locate kanon's action
         id: kanon
         env:
@@ -168,6 +170,8 @@ jobs:
           BASELINE: ${{ inputs.baseline }}
           RUNS_DIR: ${{ inputs.runs_dir }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          # On a pull request, the head commit rather than the merge commit.
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           summary="$KANON_OUT/summary.md"
           {
@@ -195,14 +199,23 @@ jobs:
               if [ "$GATED" = "true" ]; then report+=(--eval-before "$BASELINE"); fi
               if [ -d "$RUNS_DIR" ]; then report+=(--runs "$RUNS_DIR"); fi
               # The report's own title (and the blank line after it) gives way to the verdict.
-              kanon "${report[@]}" | sed '1{/^# Retrieval report$/{N;d;};}'
+              # A report that fails (say, a stray file in the run directory) still leaves a
+              # summary: its error takes the report's place.
+              kanon "${report[@]}" 2> "$KANON_OUT/report.log" \
+                | sed '1{/^# Retrieval report$/{N;d;};}' \
+                || {
+                  echo '```text'
+                  echo "kanon ${report[*]}"
+                  cat "$KANON_OUT/report.log"
+                  echo '```'
+                }
             else
               echo '```text'
               cat "$KANON_OUT/eval.log"
               echo '```'
             fi
             echo
-            echo "<sub>kanon eval ($NAME) at ${GITHUB_SHA:0:7}, [run]($RUN_URL)</sub>"
+            echo "<sub>kanon eval ($NAME) at ${SHA:0:7}, [run]($RUN_URL)</sub>"
           } > "$summary"
           cat "$summary" >> "$GITHUB_STEP_SUMMARY"
           echo "path=$summary" >> "$GITHUB_OUTPUT"
@@ -217,9 +230,9 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           SUMMARY: ${{ steps.summary.outputs.path }}
         run: |
-          marker="<!-- kanon-eval: $NAME -->"
+          export MARKER="<!-- kanon-eval: $NAME -->"
           id="$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
-            --jq ".[] | select(.body | startswith(\"$marker\")) | .id" | sed -n 1p)"
+            --jq '.[] | select(.body | startswith(env.MARKER)) | .id' | sed -n 1p)"
           if [ -n "$id" ]; then
             gh api -X PATCH "repos/$REPO/issues/comments/$id" -F body=@"$SUMMARY" --silent
           else

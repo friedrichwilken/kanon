@@ -64,19 +64,24 @@ jobs:
         with:
           tool: cross
       - name: Build
+        env:
+          CROSS: ${{ matrix.cross }}
+          TARGET: ${{ matrix.target }}
         run: |
-          if [ "${{ matrix.cross }}" = "true" ]; then
-            cross build --release --locked --target "${{ matrix.target }}"
+          if [ "$CROSS" = "true" ]; then
+            cross build --release --locked --target "$TARGET"
           else
-            cargo build --release --locked --target "${{ matrix.target }}"
+            cargo build --release --locked --target "$TARGET"
           fi
       - name: Package
         id: package
+        env:
+          TARGET: ${{ matrix.target }}
         run: |
           version="${GITHUB_REF_NAME#v}"
-          name="kanon-${version}-${{ matrix.target }}"
+          name="kanon-${version}-${TARGET}"
           mkdir -p "dist/${name}"
-          cp "target/${{ matrix.target }}/release/kanon" README.md LICENSE "dist/${name}/"
+          cp "target/${TARGET}/release/kanon" README.md LICENSE "dist/${name}/"
           tar -C dist -czf "dist/${name}.tar.gz" "${name}"
           cd dist
           if [ "$(uname -s)" = "Darwin" ]; then

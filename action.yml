@@ -27,8 +27,9 @@ outputs:
     value: ${{ steps.path.outputs.path }}
   version:
     description: >-
-      The installed kanon version without a leading "v", or "source" for a source build.
-    value: ${{ steps.resolve.outputs.version }}
+      The installed kanon version without a leading "v", or "source" for a source build
+      (asked for, or fallen back to).
+    value: ${{ steps.path.outputs.version }}
 
 runs:
   using: composite
@@ -36,8 +37,10 @@ runs:
     - name: Pick the release target for this runner
       id: target
       shell: bash
+      env:
+        RUNNER: ${{ runner.os }}-${{ runner.arch }}
       run: |
-        case "${{ runner.os }}-${{ runner.arch }}" in
+        case "$RUNNER" in
           Linux-X64) target=x86_64-unknown-linux-gnu ;;
           Linux-ARM64) target=aarch64-unknown-linux-gnu ;;
           macOS-ARM64) target=aarch64-apple-darwin ;;
@@ -55,15 +58,17 @@ runs:
         REQUESTED: ${{ inputs.version }}
         TARGET: ${{ steps.target.outputs.target }}
         TOKEN: ${{ inputs.github-token }}
+        RUNNER: ${{ runner.os }}-${{ runner.arch }}
       run: |
         mode=download
-        version="$REQUESTED"
+        # A leading "v" is tolerated: "v0.1.0" and "0.1.0" are the same release.
+        version="${REQUESTED#v}"
         if [ "$REQUESTED" = "source" ]; then
           mode=source
         elif [ -z "$TARGET" ]; then
-          echo "::notice::kanon has no release build for ${{ runner.os }}-${{ runner.arch }}; building from source"
+          echo "::notice::kanon has no release build for $RUNNER; building from source"
           mode=source
-        elif [ "$REQUESTED" = "latest" ]; then
+        elif [ "$version" = "latest" ]; then
           auth=()
           if [ -n "$TOKEN" ]; then
             auth=(-H "Authorization: Bearer $TOKEN")
@@ -106,7 +111,7 @@ runs:
         mkdir -p "$dir"
         status="$(curl -sSL -o "$dir/$filename" -w '%{http_code}' "$base/$filename")"
         if [ "$status" = "404" ]; then
-          echo "::warning::no kanon $VERSION release asset for $TARGET; building from source"
+          echo "::warning::no kanon $VERSION release asset for $TARGET; building the action's own commit from source instead"
           echo "mode=source" >> "$GITHUB_OUTPUT"
           exit 0
         elif [ "$status" != "200" ]; then
@@ -176,9 +181,19 @@ runs:
     - name: Add kanon to PATH
       id: path
       shell: bash
+      env:
+        VERSION: ${{ steps.resolve.outputs.version }}
+        DOWNLOAD_MODE: ${{ steps.download.outputs.mode }}
       run: |
         dir="$RUNNER_TEMP/kanon/bin"
         test -x "$dir/kanon"
         echo "$dir" >> "$GITHUB_PATH"
-        echo "path=$dir" >> "$GITHUB_OUTPUT"
+        # The version output says what was installed: "source" also after the fallback.
+        if [ "$DOWNLOAD_MODE" = "source" ]; then
+          VERSION=source
+        fi
+        {
+          echo "path=$dir"
+          echo "version=$VERSION"
+        } >> "$GITHUB_OUTPUT"
         "$dir/kanon" --version

@@ -64,6 +64,12 @@ and `eval --compare bm25,bm25-tantivy,dense,hybrid,external` scores several retr
 the same query set. Model endpoints come from `KANON_EMBED_URL` and `KANON_LLM_URL` (the
 `PINAKES_*` names still work).
 
+`eval --out runs/` also writes the result as `runs/NNN-<label>.json`, numbered after the last
+run in the directory and labelled with `--label` or the git short SHA, with the backend, the
+manifest and query-set hashes and the time inside. `kanon history` lists those runs as a
+Markdown table (`--json OUT` for the rows as JSON), and `report --runs runs/` adds the same
+table as a History section. Commit the directory and the numbers have a series.
+
 ## Licence
 
 Apache-2.0.

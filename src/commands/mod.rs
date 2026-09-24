@@ -6,6 +6,7 @@
 mod embed;
 mod eval;
 mod grade;
+mod history;
 mod queries;
 mod report;
 
@@ -23,6 +24,7 @@ pub use eval::{
     eval_plan,
 };
 pub use grade::{GradeOptions, GradeOutcome, grade};
+pub use history::{DEFAULT_RUNS_DIR, HistoryOptions, HistoryOutcome, history};
 pub use queries::{
     QueriesAddOptions, QueriesImportOptions, QueriesImportOutcome, queries_add, queries_check,
     queries_import,

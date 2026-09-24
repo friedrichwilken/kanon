@@ -14,7 +14,8 @@
 //! and reads the embeddings file pair; [`backend`] is the [`backend::Backend`] trait and its
 //! five shapes (`bm25`, `bm25-tantivy`, `dense`, `hybrid`, `external`); [`grade`] replays a
 //! trail against the index and asks a model to grade what came back; [`queries`] grows and
-//! validates the judge; [`report`] renders the evaluation sections of a Markdown report.
+//! validates the judge; [`report`] renders the evaluation sections of a Markdown report;
+//! [`history`] is the numbered run files `eval --out` writes and the rows `history` reads back.
 //!
 //! [`error`] holds [`error::CommandError`], the error type every command returns. [`commands`]
 //! is one file per subcommand, each owning its options and outcome. The `kanon` binary's own
@@ -28,6 +29,7 @@ mod env;
 pub mod error;
 pub mod eval;
 pub mod grade;
+pub mod history;
 pub mod llm;
 mod num;
 pub mod queries;

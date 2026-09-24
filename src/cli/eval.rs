@@ -51,6 +51,14 @@ pub(crate) struct EvalArgs {
     /// (with `--json`) one combined result file.
     #[arg(long, value_name = "NAME,NAME,…", value_delimiter = ',')]
     compare: Vec<String>,
+    /// Also write the result as the next numbered run file, `DIR/NNN-<label>.json`, with the
+    /// backend, manifest hash, query-set hash and time inside (`kanon history` reads them).
+    #[arg(long, value_name = "DIR")]
+    out: Option<PathBuf>,
+    /// The run file's label (default: the git short SHA of the config's repository, else
+    /// `run`); `--compare` appends `-<backend>`.
+    #[arg(long, value_name = "LABEL", requires = "out")]
+    label: Option<String>,
 }
 
 /// The command-line flags as [`commands::EvalFlags`], before the config's defaults are
@@ -68,6 +76,8 @@ fn eval_flags(args: EvalArgs) -> EvalFlags {
         embeddings: args.embeddings,
         allow_stale: args.allow_stale,
         compare: args.compare,
+        out: args.out,
+        label: args.label,
     }
 }
 
@@ -116,6 +126,9 @@ fn run_eval_plain(paths: &Paths, options: &EvalOptions) -> Result<ExitCode> {
             .context("serialising the result")?;
         std::io::stdout().lock().write_all(text.as_bytes())?;
     }
+    if let Some(path) = &outcome.run_file {
+        eprintln!("wrote {}", path.display());
+    }
     if let Some(gate) = outcome.gate {
         let verdict = if gate.passed() { "ok" } else { "FAILED" };
         eprintln!(
@@ -156,6 +169,9 @@ fn run_eval_with_backend(paths: &Paths, options: &BackendEvalOptions) -> Result<
             .context("serialising the result")?;
         std::io::stdout().lock().write_all(text.as_bytes())?;
     }
+    if let Some(path) = &outcome.run_file {
+        eprintln!("wrote {}", path.display());
+    }
     if let Some(gate) = outcome.gate {
         print_gate(backend, &gate);
         if !gate.passed() {
@@ -185,6 +201,9 @@ fn run_eval_compare(
             &outcome.summary,
             outcome.delta.as_ref(),
         );
+        if let Some(path) = &outcome.run_file {
+            eprintln!("wrote {}", path.display());
+        }
         if let Some(gate) = &outcome.gate {
             print_gate(*backend, gate);
             failed_gate |= !gate.passed();

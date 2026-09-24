@@ -1,6 +1,7 @@
 //! `kanon report`: the evaluation sections of a Markdown report, rendered from one or two
-//! `eval --json` results. The corpus sections (residue, duplicates, decisions) stay with
-//! `pinakes report`; this renders only what `kanon` measures.
+//! `eval --json` results and, with `--runs`, the history of a run directory. The corpus
+//! sections (residue, duplicates, decisions) stay with `pinakes report`; this renders only
+//! what `kanon` measures.
 //!
 //! The tables are the ones `pinakes report` used to render for `--eval-before/--eval-after`,
 //! so a PR body built from both tools reads the same as before the move.
@@ -9,6 +10,7 @@ use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
 use crate::eval::{EvalSummary, Metrics, Split};
+use crate::history::{self, HistoryRow};
 
 /// Everything the report is rendered from.
 #[derive(Debug, Clone, Copy, Default)]
@@ -17,6 +19,8 @@ pub struct ReportInput<'a> {
     pub before: Option<&'a EvalSummary>,
     /// Evaluation on the current corpus or retriever.
     pub after: Option<&'a EvalSummary>,
+    /// The rows of a run directory (`--runs`); the History section appears only when given.
+    pub history: Option<&'a [HistoryRow]>,
 }
 
 /// Render the report as Markdown.
@@ -33,6 +37,11 @@ pub fn render(input: ReportInput<'_>) -> String {
         let _ = writeln!(out, "- Backend: {}\n", names.join(", "));
     }
     eval_section(&mut out, input.before, input.after);
+    if let Some(rows) = input.history {
+        out.push_str("## History\n\n");
+        out.push_str(&history::render_table(rows));
+        out.push('\n');
+    }
     out
 }
 
@@ -97,6 +106,7 @@ fn eval_row(out: &mut String, label: &str, before: Option<&Metrics>, after: Opti
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::path::Path;
 
     use super::*;
 
@@ -164,6 +174,7 @@ mod tests {
         let text = render(ReportInput {
             before: Some(&before),
             after: Some(&after),
+            history: None,
         });
         assert!(text.contains("| overall | 0.800 → 0.850 | 0.850 → 0.900 | 0.660 → 0.700 | 40 |"));
         assert!(text.contains("| concept | – → 0.700 | – → 0.700 | – → 0.500 | 5 |"));
@@ -185,9 +196,47 @@ mod tests {
         let text = render(ReportInput {
             before: None,
             after: Some(&after),
+            history: None,
         });
         assert!(text.contains("| overall | – → 0.850 | – → 0.900 | – → 0.700 | 40 |"));
         assert!(text.contains("### Held-out queries"));
         snapshot("report_after_only", &text);
+    }
+
+    #[test]
+    fn report_with_a_history_section() {
+        let (before, after) = evals();
+        let first = history::Run {
+            summary: before,
+            run: Some(history::RunInfo {
+                label: "a1b2c3d".to_string(),
+                at: "2026-09-16T12:00:00Z".to_string(),
+                backend: "bm25".to_string(),
+                manifest_sha256: "0123456789abcdef".repeat(4),
+                queries_sha256: "fedcba9876543210".repeat(4),
+                k: 10,
+            }),
+        };
+        let second = history::Run {
+            summary: after,
+            run: None,
+        };
+        let rows = vec![
+            HistoryRow::of(1, Path::new("runs/001-a1b2c3d.json"), &first),
+            HistoryRow::of(2, Path::new("runs/002-plain.json"), &second),
+        ];
+        let text = render(ReportInput {
+            before: None,
+            after: None,
+            history: Some(&rows),
+        });
+        assert!(text.contains("_No evaluation results supplied._\n\n## History\n\n"));
+        assert!(text.contains("| 001 | a1b2c3d | bm25 | 0.800 |"), "{text}");
+        assert!(
+            text.contains("| 01234567 | 2026-09-16T12:00:00Z |"),
+            "{text}"
+        );
+        assert!(text.contains("| 002 | – | bm25 | 0.850 |"), "{text}");
+        snapshot("report_history", &text);
     }
 }

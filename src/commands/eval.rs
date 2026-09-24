@@ -6,6 +6,7 @@ use crate::config::{Config, DEFAULT_K, DEFAULT_MAX_RECALL_DROP};
 use crate::embed::{EmbedError, Embedder, HttpEmbedder};
 use crate::error::CommandError;
 use crate::eval::{self, Delta, EvalSummary, Gate};
+use crate::history::{self, Run, RunInfo};
 use crate::workspace::Paths;
 use pinakes::index::{self, Index, IndexError, Page, Priorities};
 
@@ -26,6 +27,10 @@ pub struct EvalOptions {
     pub with: Vec<String>,
     /// Pages to remove before measuring.
     pub without: Vec<String>,
+    /// Write a numbered run file into this directory (see [`crate::history`]).
+    pub out: Option<PathBuf>,
+    /// The run file's label; default: the git short SHA, else `run`.
+    pub label: Option<String>,
 }
 
 /// What `eval` produced.
@@ -43,6 +48,8 @@ pub struct EvalOutcome {
     pub gate: Option<Gate>,
     /// The delta when `--with`/`--without` was given.
     pub delta: Option<Delta>,
+    /// The run file written when `--out` was given.
+    pub run_file: Option<PathBuf>,
 }
 
 /// The query file: `--queries` when given, else `queries` from the config.
@@ -102,6 +109,17 @@ pub fn eval(paths: &Paths, options: &EvalOptions) -> Result<EvalOutcome, Command
     if let Some(path) = &options.json {
         summary.save(path)?;
     }
+    let run_file = match &options.out {
+        Some(dir) => Some(write_run(
+            paths,
+            dir,
+            options.label.as_deref(),
+            &queries_path,
+            k,
+            &summary,
+        )?),
+        None => None,
+    };
     Ok(EvalOutcome {
         summary,
         page_count,
@@ -109,7 +127,39 @@ pub fn eval(paths: &Paths, options: &EvalOptions) -> Result<EvalOutcome, Command
         k,
         gate,
         delta,
+        run_file,
     })
+}
+
+/// Write `summary` as the next run file in `dir`, with a [`RunInfo`] tying it to the artifact's
+/// manifest, the query file and `k`. The backend recorded is the result's own, or `bm25` for
+/// the plain path, which measures the reference index and leaves the field empty.
+fn write_run(
+    paths: &Paths,
+    dir: &Path,
+    label: Option<&str>,
+    queries_path: &Path,
+    k: usize,
+    summary: &EvalSummary,
+) -> Result<PathBuf, CommandError> {
+    let backend = if summary.backend.is_empty() {
+        BackendKind::Bm25.name().to_string()
+    } else {
+        summary.backend.clone()
+    };
+    let queries_bytes = std::fs::read(queries_path).map_err(crate::error::io_err(queries_path))?;
+    let run = Run {
+        summary: summary.clone(),
+        run: Some(RunInfo {
+            label: history::run_label(label, &paths.config_dir()),
+            at: pinakes::manifest::now_rfc3339(),
+            backend,
+            manifest_sha256: crate::embed::artifact_manifest_hash(&paths.artifact)?,
+            queries_sha256: pinakes::text::sha256_hex(&queries_bytes),
+            k,
+        }),
+    };
+    Ok(history::write_run(dir, &run)?)
 }
 
 /// Adjust `pages` by `with`/`without`, index it, and return the before/after summaries' delta
@@ -184,6 +234,11 @@ pub struct BackendEvalOptions {
     pub allow_stale: bool,
     /// Where query embeddings come from (`dense`, `hybrid`).
     pub embedder: Option<std::rc::Rc<dyn Embedder>>,
+    /// Write a numbered run file into this directory (see [`crate::history`]).
+    pub out: Option<PathBuf>,
+    /// The run file's label; default: the git short SHA, else `run`. `eval --compare` suffixes
+    /// it with `-<backend>`.
+    pub label: Option<String>,
 }
 
 /// What `eval --backend` produced.
@@ -201,6 +256,8 @@ pub struct BackendEvalOutcome {
     pub gate: Option<Gate>,
     /// The delta when `--with`/`--without` was given.
     pub delta: Option<Delta>,
+    /// The run file written when `--out` was given.
+    pub run_file: Option<PathBuf>,
 }
 
 /// Run every query against `backend` with a result list of `k` pages.
@@ -296,6 +353,17 @@ pub fn eval_backend(
     if let Some(path) = &options.json {
         summary.save(path)?;
     }
+    let run_file = match &options.out {
+        Some(dir) => Some(write_run(
+            paths,
+            dir,
+            options.label.as_deref(),
+            &queries_path,
+            k,
+            &summary,
+        )?),
+        None => None,
+    };
     Ok(BackendEvalOutcome {
         summary,
         page_count,
@@ -303,10 +371,12 @@ pub fn eval_backend(
         k,
         gate,
         delta,
+        run_file,
     })
 }
 
 /// Run `eval --compare a,b,c`: [`eval_backend`] once per backend, over the same query set.
+/// With `out`, each backend gets its own run file, labelled `<label>-<backend>`.
 pub fn eval_compare(
     paths: &Paths,
     backends: &[BackendKind],
@@ -315,12 +385,17 @@ pub fn eval_compare(
     if backends.is_empty() {
         return Err(CommandError::EmptyCompare);
     }
+    let label = common
+        .out
+        .is_some()
+        .then(|| history::run_label(common.label.as_deref(), &paths.config_dir()));
     backends
         .iter()
         .map(|&kind| {
             let options = BackendEvalOptions {
                 backend: kind,
                 json: None,
+                label: label.as_ref().map(|label| format!("{label}-{kind}")),
                 ..common.clone()
             };
             Ok((kind, eval_backend(paths, &options)?))
@@ -358,6 +433,10 @@ pub struct EvalFlags {
     pub allow_stale: bool,
     /// `--compare`.
     pub compare: Vec<String>,
+    /// `--out`.
+    pub out: Option<PathBuf>,
+    /// `--label`.
+    pub label: Option<String>,
 }
 
 /// Fill the config's defaults (`backend`, `backend_url`, `embeddings`, `compare`)
@@ -459,6 +538,8 @@ pub fn eval_plan(flags: EvalFlags) -> Result<EvalPlan, CommandError> {
             embeddings: flags.embeddings,
             allow_stale: flags.allow_stale,
             embedder: None,
+            out: flags.out,
+            label: flags.label,
         };
         return Ok(EvalPlan::Compare {
             backends,
@@ -478,6 +559,8 @@ pub fn eval_plan(flags: EvalFlags) -> Result<EvalPlan, CommandError> {
             gate: flags.gate,
             with: flags.with,
             without: flags.without,
+            out: flags.out,
+            label: flags.label,
         }));
     }
     let backend: BackendKind = flags.backend.as_deref().unwrap_or("bm25").parse()?;
@@ -493,6 +576,8 @@ pub fn eval_plan(flags: EvalFlags) -> Result<EvalPlan, CommandError> {
         embeddings: flags.embeddings,
         allow_stale: flags.allow_stale,
         embedder: None,
+        out: flags.out,
+        label: flags.label,
     }))
 }
 

@@ -5,7 +5,7 @@ use std::process::ExitCode;
 use anyhow::{Context, Result};
 use clap::Args;
 
-use kanon::commands::{self, GradeOptions, Paths};
+use kanon::commands::{self, BackendFlags, GradeOptions, Paths};
 use pinakes::llm::UreqChatTransport;
 
 #[derive(Args)]
@@ -13,10 +13,20 @@ pub(crate) struct GradeArgs {
     /// Trail file to replay.
     #[arg(long, value_name = "FILE")]
     trail: PathBuf,
-    /// Backend to fetch candidates from; only `bm25` is available today (the backend trait is not
-    /// wired into `grade` yet).
-    #[arg(long, default_value = "bm25")]
-    backend: String,
+    /// Backend to fetch candidates from: bm25 (default), bm25-tantivy, dense, hybrid or
+    /// external; the same names and config defaults as `eval --backend`.
+    #[arg(long, value_name = "NAME")]
+    backend: Option<String>,
+    /// The consumer's search endpoint base URL (`--backend external`).
+    #[arg(long, value_name = "URL")]
+    backend_url: Option<String>,
+    /// `embeddings.bin` path (`--backend dense`/`hybrid`; default: `embeddings.bin` next to the
+    /// config).
+    #[arg(long, value_name = "FILE")]
+    embeddings: Option<PathBuf>,
+    /// Use embeddings even when their recorded manifest hash does not match the artifact.
+    #[arg(long)]
+    allow_stale: bool,
     /// Candidates fetched per query.
     #[arg(long, value_name = "N")]
     k: Option<usize>,
@@ -29,9 +39,26 @@ pub(crate) struct GradeArgs {
 }
 
 pub(crate) fn run_grade(paths: &Paths, args: GradeArgs) -> Result<ExitCode> {
+    let mut flags = BackendFlags {
+        backend: args.backend,
+        backend_url: args.backend_url,
+        embeddings: args.embeddings,
+        allow_stale: args.allow_stale,
+    };
+    commands::apply_backend_config_defaults(paths, &mut flags)?;
+    let backend = flags.kind()?;
+    let embedder = if backend.needs_embedder() {
+        Some(commands::eval_embedder_from_env()?)
+    } else {
+        None
+    };
     let options = GradeOptions {
         trail: args.trail,
-        backend: Some(args.backend),
+        backend,
+        backend_url: flags.backend_url,
+        embeddings: flags.embeddings,
+        allow_stale: flags.allow_stale,
+        embedder,
         k: args.k,
         model: args.model,
         out: args.out.clone(),
@@ -39,9 +66,10 @@ pub(crate) fn run_grade(paths: &Paths, args: GradeArgs) -> Result<ExitCode> {
     let transport = UreqChatTransport::new();
     let outcome = commands::grade(paths, &options, &transport)?;
     eprintln!(
-        "{} queries, {} graded rows",
+        "{} queries, {} graded rows [{}]",
         outcome.queries,
-        outcome.rows.len()
+        outcome.rows.len(),
+        outcome.backend
     );
     if let Some(path) = &args.out {
         eprintln!("wrote {}", path.display());

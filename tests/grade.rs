@@ -2,10 +2,11 @@
 
 use std::path::{Path, PathBuf};
 
+use kanon::backend::{Backend, BackendConfig, Bm25Backend};
 use kanon::config::priorities;
 use kanon::contracts::read_trail;
-use kanon::grade::{self, GradedRow};
-use pinakes::index::Index;
+use kanon::grade::{self, GradedRow, PageLookup};
+use pinakes::index::{load_pages, mark_mirrors};
 use pinakes::llm::LlmConfig;
 use pinakes::llm::testing::{Scripted, ScriptedTransport, completion};
 
@@ -33,7 +34,14 @@ fn config() -> LlmConfig {
 fn grade_replays_distinct_queries_and_writes_query_id_grade_model_at() {
     let artifact = fixture().join("artifact");
     let priorities = priorities(&fixture().join("pinakes.yaml")).unwrap();
-    let index = Index::build(&artifact, &priorities).unwrap();
+    let backend_config = BackendConfig {
+        priorities: priorities.clone(),
+        ..BackendConfig::default()
+    };
+    let backend = Bm25Backend::build(&artifact, &backend_config).unwrap();
+    let mut pages = load_pages(&artifact, &priorities).unwrap();
+    mark_mirrors(&mut pages);
+    let lookup = PageLookup::new(&pages);
 
     let dir = tempfile::tempdir().unwrap();
     let trail_path = dir.path().join("trail.jsonl");
@@ -67,10 +75,9 @@ fn grade_replays_distinct_queries_and_writes_query_id_grade_model_at() {
     let llm_config = config();
     let mut rows: Vec<GradedRow> = Vec::new();
     for query in &queries {
-        let hits = grade::bm25_search(&index, query, grade::DEFAULT_K).unwrap();
-        rows.extend(
-            grade::grade_query(&transport, &llm_config, &index, query, &hits, "t").unwrap(),
-        );
+        let hits = backend.search(query, grade::DEFAULT_K, None).unwrap();
+        let candidates = lookup.candidates(&hits);
+        rows.extend(grade::grade_query(&transport, &llm_config, query, &candidates, "t").unwrap());
     }
 
     // Exactly one model call per distinct query, not per trail line.

@@ -1,18 +1,21 @@
 //! `kanon grade`: replay distinct trail queries against a backend and ask the model to grade
 //! each candidate 0-3 for relevance.
 //!
-//! `grade` still fetches candidates through the built-in [`Index`] directly, via
-//! [`bm25_search`], rather than through [`crate::backend::Backend`]; `--backend` accepts only
-//! `bm25` until grade is wired to the trait, at which point [`bm25_search`] becomes an adapter
-//! over it. `grade`'s contract - one `search(query, k) -> Vec<Hit>` call per distinct query -
-//! does not change.
+//! The candidates come from whichever [`crate::backend::Backend`] the command built: `bm25`
+//! by default, or the retriever that actually served the trail, so `queries import` learns
+//! from the list the consumer showed. What the model sees of each candidate is the title and
+//! an excerpt of its artifact page, looked up by id through [`PageLookup`]. A hit whose id is
+//! not in the artifact (an external backend may return anything) is still graded, with the id
+//! as its title and no excerpt, rather than dropped. Grading itself is one model call per
+//! distinct query ([`grade_query`]).
 
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use pinakes::index::{Hit, Index, IndexError};
+use pinakes::index::{Hit, Page};
 use pinakes::jsonl::{self, KeyOrder};
 use pinakes::llm::{self, ChatError, ChatTransport, LlmConfig};
 use pinakes::residue;
@@ -32,16 +35,7 @@ pub enum GradeError {
     /// Talking to the model failed.
     #[error(transparent)]
     Llm(#[from] ChatError),
-    /// Searching the backend failed.
-    #[error(transparent)]
-    Index(#[from] IndexError),
-    /// `--backend` named something other than `bm25`.
-    #[error("unknown backend {0:?}: grade only replays against \"bm25\" today")]
-    UnknownBackend(String),
 }
-
-/// The only backend name `grade` accepts today.
-pub const BM25_BACKEND: &str = "bm25";
 
 /// One graded row.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -75,42 +69,49 @@ pub fn distinct_queries(entries: &[TrailEntry]) -> Vec<String> {
     out
 }
 
-/// Check that `backend` is one `grade` can use today.
-pub fn check_backend(backend: &str) -> Result<(), GradeError> {
-    if backend == BM25_BACKEND {
-        Ok(())
-    } else {
-        Err(GradeError::UnknownBackend(backend.to_string()))
+/// One candidate shown to the model for grading: a hit's page id, with the title and an
+/// excerpt of its artifact page when the artifact has one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Candidate {
+    /// `<source>::<path>`, as the backend returned it.
+    pub id: String,
+    /// The page's title; the id itself when the page is not in the artifact.
+    pub title: String,
+    /// The first 300 tokens of the page; empty when the page is not in the
+    /// artifact.
+    pub excerpt: String,
+}
+
+/// The artifact's pages keyed by id, for turning a backend's hits into [`Candidate`]s.
+#[derive(Debug, Clone)]
+pub struct PageLookup<'a>(BTreeMap<&'a str, &'a Page>);
+
+impl<'a> PageLookup<'a> {
+    /// Index `pages` by id (the artifact as `pinakes::index::load_pages` reads it, mirrors
+    /// included).
+    pub fn new(pages: &'a [Page]) -> PageLookup<'a> {
+        PageLookup(pages.iter().map(|page| (page.id.as_str(), page)).collect())
     }
-}
 
-/// The built-in BM25 search `grade` uses for the `bm25` backend (see the module docs for why
-/// this exists instead of a `Backend` trait call).
-pub fn bm25_search(index: &Index, query: &str, k: usize) -> Result<Vec<Hit>, GradeError> {
-    Ok(index.search(query, k, None)?)
-}
-
-/// One candidate shown to the model for grading.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-struct GradeCandidate {
-    id: String,
-    title: String,
-    excerpt: String,
-}
-
-/// Turn search hits into grading candidates, looking their page up in `index`; a hit whose page
-/// cannot be found (should not happen: hits come from this same index) is skipped.
-fn candidates_for(index: &Index, hits: &[Hit]) -> Vec<GradeCandidate> {
-    hits.iter()
-        .filter_map(|hit| {
-            let page = index.page(&hit.page_id)?;
-            Some(GradeCandidate {
-                id: hit.page_id.clone(),
-                title: page.title.clone(),
-                excerpt: residue::excerpt(&page.content, EXCERPT_TOKENS),
+    /// The candidates for `hits`, in hit order. A hit whose page is not in the artifact is
+    /// kept, with its id as the title and an empty excerpt: the retriever showed it, so it
+    /// gets graded.
+    pub fn candidates(&self, hits: &[Hit]) -> Vec<Candidate> {
+        hits.iter()
+            .map(|hit| match self.0.get(hit.page_id.as_str()) {
+                Some(page) => Candidate {
+                    id: hit.page_id.clone(),
+                    title: page.title.clone(),
+                    excerpt: residue::excerpt(&page.content, EXCERPT_TOKENS),
+                },
+                None => Candidate {
+                    id: hit.page_id.clone(),
+                    title: hit.page_id.clone(),
+                    excerpt: String::new(),
+                },
             })
-        })
-        .collect()
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -126,27 +127,25 @@ and excerpt. For every candidate, grade how relevant it is to the query from 0 (
 no markdown code fences, one object per candidate id you were given, in this exact shape: \
 [{\"id\": \"...\", \"grade\": 0}]";
 
-fn user_prompt(query: &str, candidates: &[GradeCandidate]) -> String {
+fn user_prompt(query: &str, candidates: &[Candidate]) -> String {
     let body = serde_json::json!({"query": query, "candidates": candidates});
     serde_json::to_string_pretty(&body).unwrap_or_default()
 }
 
-/// Ask the model to grade every hit of one query, dropping any id it returns that was not among
-/// the candidates it was given.
+/// Ask the model to grade every candidate of one query, dropping any id it returns that was
+/// not among the candidates it was given. No candidates, no model call.
 pub fn grade_query(
     transport: &dyn ChatTransport,
     config: &LlmConfig,
-    index: &Index,
     query: &str,
-    hits: &[Hit],
+    candidates: &[Candidate],
     at: &str,
 ) -> Result<Vec<GradedRow>, GradeError> {
-    let candidates = candidates_for(index, hits);
     if candidates.is_empty() {
         return Ok(Vec::new());
     }
     let known: BTreeSet<&str> = candidates.iter().map(|c| c.id.as_str()).collect();
-    let user = user_prompt(query, &candidates);
+    let user = user_prompt(query, candidates);
     let grades: Vec<ModelGrade> = llm::chat(transport, config, SYSTEM_PROMPT, &user)?;
     Ok(grades
         .into_iter()
@@ -164,7 +163,6 @@ pub fn grade_query(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pinakes::index::Page;
     use pinakes::llm::testing::{Scripted, ScriptedTransport, completion};
 
     fn page(id: &str, source: &str, path: &str, title: &str, content: &str) -> Page {
@@ -184,8 +182,8 @@ mod tests {
         }
     }
 
-    fn index() -> Index {
-        Index::from_pages(vec![
+    fn pages() -> Vec<Page> {
+        vec![
             page(
                 "handbook::docs/caching.md",
                 "handbook",
@@ -200,8 +198,23 @@ mod tests {
                 "Quotas",
                 "Quota limits apply per project.",
             ),
-        ])
-        .unwrap()
+        ]
+    }
+
+    fn hit(page_id: &str) -> Hit {
+        Hit {
+            page_id: page_id.to_string(),
+            score: 1.0,
+            heading: String::new(),
+        }
+    }
+
+    fn caching_candidates() -> Vec<Candidate> {
+        vec![Candidate {
+            id: "handbook::docs/caching.md".to_string(),
+            title: "Caching".to_string(),
+            excerpt: "Enable upload caching with a label on the bucket.".to_string(),
+        }]
     }
 
     fn config() -> LlmConfig {
@@ -245,23 +258,43 @@ mod tests {
     }
 
     #[test]
-    fn check_backend_accepts_only_bm25() {
-        assert!(check_backend("bm25").is_ok());
-        let err = check_backend("dense").unwrap_err();
-        assert!(matches!(err, GradeError::UnknownBackend(b) if b == "dense"));
+    fn candidates_carry_the_page_title_and_excerpt_in_hit_order() {
+        let pages = pages();
+        let lookup = PageLookup::new(&pages);
+        let candidates = lookup.candidates(&[
+            hit("handbook::docs/quotas.md"),
+            hit("handbook::docs/caching.md"),
+        ]);
+        assert_eq!(
+            candidates,
+            [
+                Candidate {
+                    id: "handbook::docs/quotas.md".to_string(),
+                    title: "Quotas".to_string(),
+                    excerpt: "Quota limits apply per project.".to_string(),
+                },
+                caching_candidates()[0].clone(),
+            ]
+        );
     }
 
     #[test]
-    fn bm25_search_returns_hits_from_the_index() {
-        let index = index();
-        let hits = bm25_search(&index, "enable caching", 10).unwrap();
-        assert_eq!(hits[0].page_id, "handbook::docs/caching.md");
+    fn a_hit_outside_the_artifact_is_kept_with_its_id_as_title_and_no_excerpt() {
+        let pages = pages();
+        let lookup = PageLookup::new(&pages);
+        let candidates = lookup.candidates(&[hit("elsewhere::docs/unknown.md")]);
+        assert_eq!(
+            candidates,
+            [Candidate {
+                id: "elsewhere::docs/unknown.md".to_string(),
+                title: "elsewhere::docs/unknown.md".to_string(),
+                excerpt: String::new(),
+            }]
+        );
     }
 
     #[test]
     fn grade_query_asks_the_model_and_drops_unknown_ids() {
-        let index = index();
-        let hits = bm25_search(&index, "caching", 10).unwrap();
         let reply = completion(
             &serde_json::to_string(&serde_json::json!([
                 {"id": "handbook::docs/caching.md", "grade": 3},
@@ -270,7 +303,8 @@ mod tests {
             .unwrap(),
         );
         let transport = ScriptedTransport::new(vec![Scripted::Ok(reply)]);
-        let rows = grade_query(&transport, &config(), &index, "caching", &hits, "t").unwrap();
+        let rows =
+            grade_query(&transport, &config(), "caching", &caching_candidates(), "t").unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, "handbook::docs/caching.md");
         assert_eq!(rows[0].grade, 3);
@@ -279,8 +313,6 @@ mod tests {
 
     #[test]
     fn grade_query_clamps_an_out_of_range_grade() {
-        let index = index();
-        let hits = bm25_search(&index, "caching", 10).unwrap();
         let reply = completion(
             &serde_json::to_string(&serde_json::json!([
                 {"id": "handbook::docs/caching.md", "grade": 9},
@@ -288,23 +320,15 @@ mod tests {
             .unwrap(),
         );
         let transport = ScriptedTransport::new(vec![Scripted::Ok(reply)]);
-        let rows = grade_query(&transport, &config(), &index, "caching", &hits, "t").unwrap();
+        let rows =
+            grade_query(&transport, &config(), "caching", &caching_candidates(), "t").unwrap();
         assert_eq!(rows[0].grade, MAX_GRADE);
     }
 
     #[test]
-    fn grade_query_with_no_hits_never_calls_the_model() {
-        let index = index();
+    fn grade_query_with_no_candidates_never_calls_the_model() {
         let transport = ScriptedTransport::new(vec![]);
-        let rows = grade_query(
-            &transport,
-            &config(),
-            &index,
-            "nothing matches at all",
-            &[],
-            "t",
-        )
-        .unwrap();
+        let rows = grade_query(&transport, &config(), "nothing matches at all", &[], "t").unwrap();
         assert!(rows.is_empty());
         assert!(transport.requests.lock().unwrap().is_empty());
     }

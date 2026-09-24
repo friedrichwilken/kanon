@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use crate::backend::{self, BackendKind};
+use crate::backend::{self, BackendSpec};
 use crate::contracts;
 use crate::embed::Embedder;
 use crate::error::{CommandError, io_err};
@@ -21,12 +21,9 @@ use super::settings;
 pub struct GradeOptions {
     /// `trail.jsonl` to replay.
     pub trail: PathBuf,
-    /// The backend to fetch candidates from (`--backend`; `bm25` when not given).
-    pub backend: BackendKind,
-    /// The consumer's search endpoint (`external`).
-    pub backend_url: Option<String>,
-    /// `embeddings.bin` path (`dense`, `hybrid`); default: `paths.embeddings`.
-    pub embeddings: Option<PathBuf>,
+    /// The backend to fetch candidates from (`--backend`; `bm25` when not given), with the
+    /// URL or embeddings file that came with its name.
+    pub backend: BackendSpec,
     /// Use embeddings even when their recorded manifest hash does not match the artifact.
     pub allow_stale: bool,
     /// Where query embeddings come from (`dense`, `hybrid`).
@@ -47,7 +44,7 @@ pub struct GradeOutcome {
     /// Distinct queries replayed.
     pub queries: usize,
     /// The backend the candidates came from.
-    pub backend: BackendKind,
+    pub backend: BackendSpec,
 }
 
 /// Run `grade`: replay every distinct trail query against the backend and ask the model to
@@ -69,12 +66,11 @@ pub fn grade(
     let backend_config = backend_config(
         paths,
         priorities,
-        options.backend_url.as_deref(),
-        options.embeddings.as_deref(),
+        &options.backend,
         options.allow_stale,
         options.embedder.clone(),
     );
-    let backend = backend::build(options.backend, &paths.artifact, &backend_config)?;
+    let backend = backend::build(options.backend.kind, &paths.artifact, &backend_config)?;
     let k = options.k.unwrap_or(grade::DEFAULT_K);
     let at = now_rfc3339();
     let mut rows = Vec::new();
@@ -95,7 +91,7 @@ pub fn grade(
     Ok(GradeOutcome {
         rows,
         queries: queries.len(),
-        backend: options.backend,
+        backend: options.backend.clone(),
     })
 }
 
@@ -107,7 +103,7 @@ mod tests {
     use std::path::Path;
 
     use super::*;
-    use crate::backend::BackendError;
+    use crate::backend::{BackendError, BackendKind};
     use crate::contracts::{BACKEND_VERSION, SearchHit, SearchResponse};
     use crate::testing::{eval_workspace, read_http_request, with_llm_url};
     use pinakes::llm::testing::{Scripted, ScriptedTransport, completion};
@@ -184,7 +180,7 @@ mod tests {
             // Only one request even though the query appears twice in the trail.
             assert_eq!(transport.requests.lock().unwrap().len(), 1);
             assert_eq!(outcome.queries, 1);
-            assert_eq!(outcome.backend, BackendKind::Bm25);
+            assert_eq!(outcome.backend, BackendSpec::default());
             assert_eq!(outcome.rows.len(), 1);
             assert_eq!(outcome.rows[0].id, PAGE_ID);
             assert_eq!(outcome.rows[0].grade, 3);
@@ -201,12 +197,12 @@ mod tests {
             let transport = grader(&[PAGE_ID]);
             let options = GradeOptions {
                 trail: trail_path,
-                backend: BackendKind::Bm25Tantivy,
+                backend: BackendSpec::builtin(BackendKind::Bm25Tantivy),
                 model: Some("grader".to_string()),
                 ..GradeOptions::default()
             };
             let outcome = grade(&paths, &options, &transport).unwrap();
-            assert_eq!(outcome.backend, BackendKind::Bm25Tantivy);
+            assert_eq!(outcome.backend.kind, BackendKind::Bm25Tantivy);
             assert_eq!(outcome.rows.len(), 1);
             assert_eq!(outcome.rows[0].id, PAGE_ID);
             // The model saw the page's title and text, looked up from the artifact.
@@ -229,14 +225,19 @@ mod tests {
             let transport = grader(&[UNKNOWN_ID, PAGE_ID]);
             let options = GradeOptions {
                 trail: trail_path,
-                backend: BackendKind::External,
-                backend_url: Some(format!("http://{addr}")),
+                backend: BackendSpec {
+                    name: "old".to_string(),
+                    kind: BackendKind::External,
+                    url: Some(format!("http://{addr}")),
+                    embeddings: None,
+                },
                 model: Some("grader".to_string()),
                 ..GradeOptions::default()
             };
             let outcome = grade(&paths, &options, &transport).unwrap();
             handle.join().unwrap();
-            assert_eq!(outcome.backend, BackendKind::External);
+            assert_eq!(outcome.backend.kind, BackendKind::External);
+            assert_eq!(outcome.backend.to_string(), "old", "a configured name");
             let ids: Vec<&str> = outcome.rows.iter().map(|r| r.id.as_str()).collect();
             assert_eq!(
                 ids,
@@ -268,7 +269,7 @@ mod tests {
             let transport = ScriptedTransport::new(vec![]);
             let options = GradeOptions {
                 trail: trail_path,
-                backend: BackendKind::External,
+                backend: BackendSpec::builtin(BackendKind::External),
                 model: Some("grader".to_string()),
                 ..GradeOptions::default()
             };

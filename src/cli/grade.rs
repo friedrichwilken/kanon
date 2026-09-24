@@ -13,8 +13,9 @@ pub(crate) struct GradeArgs {
     /// Trail file to replay.
     #[arg(long, value_name = "FILE")]
     trail: PathBuf,
-    /// Backend to fetch candidates from: bm25 (default), bm25-tantivy, dense, hybrid or
-    /// external; the same names and config defaults as `eval --backend`.
+    /// Backend to fetch candidates from: bm25 (default), bm25-tantivy, dense, hybrid, external
+    /// or a name from the config's `backends`; the same names and config defaults as
+    /// `eval --backend`.
     #[arg(long, value_name = "NAME")]
     backend: Option<String>,
     /// The consumer's search endpoint base URL (`--backend external`).
@@ -44,9 +45,10 @@ pub(crate) fn run_grade(paths: &Paths, args: GradeArgs) -> Result<ExitCode> {
         backend_url: args.backend_url,
         embeddings: args.embeddings,
         allow_stale: args.allow_stale,
+        ..BackendFlags::default()
     };
     commands::apply_backend_config_defaults(paths, &mut flags)?;
-    let backend = flags.kind()?;
+    let backend = flags.spec()?;
     let embedder = if backend.needs_embedder() {
         Some(commands::eval_embedder_from_env()?)
     } else {
@@ -55,8 +57,6 @@ pub(crate) fn run_grade(paths: &Paths, args: GradeArgs) -> Result<ExitCode> {
     let options = GradeOptions {
         trail: args.trail,
         backend,
-        backend_url: flags.backend_url,
-        embeddings: flags.embeddings,
         allow_stale: flags.allow_stale,
         embedder,
         k: args.k,

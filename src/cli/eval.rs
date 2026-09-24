@@ -5,7 +5,7 @@ use std::process::ExitCode;
 use anyhow::{Context, Result};
 use clap::Args;
 
-use kanon::backend::BackendKind;
+use kanon::backend::BackendSpec;
 use kanon::commands::{
     self, BackendEvalOptions, BackendFlags, EvalFlags, EvalOptions, EvalPlan, Paths,
 };
@@ -44,10 +44,12 @@ pub(crate) struct EvalArgs {
     /// this; without it, only an empty result list rejects.
     #[arg(long, value_name = "SCORE")]
     negative_threshold: Option<f64>,
-    /// Retriever backend to measure: bm25 (default), bm25-tantivy, dense, hybrid or external.
+    /// Retriever backend to measure: bm25 (default), bm25-tantivy, dense, hybrid, external or
+    /// a name from the config's `backends`.
     #[arg(long, value_name = "NAME")]
     backend: Option<String>,
-    /// The consumer's search endpoint base URL (`--backend external`).
+    /// The consumer's search endpoint base URL (`--backend external`; a configured name brings
+    /// its own).
     #[arg(long, value_name = "URL")]
     backend_url: Option<String>,
     /// `embeddings.bin` path (`--backend dense`/`hybrid`; default: `embeddings.bin` next to the
@@ -57,8 +59,9 @@ pub(crate) struct EvalArgs {
     /// Use embeddings even when their recorded manifest hash does not match the artifact.
     #[arg(long)]
     allow_stale: bool,
-    /// Run every named backend (comma-separated) over the same query set, one table each, and
-    /// (with `--json`) one combined result file.
+    /// Run every named backend (comma-separated: built-in kinds or names from the config's
+    /// `backends`) over the same query set, one table each, and (with `--json`) one combined
+    /// result file keyed by name.
     #[arg(long, value_name = "NAME,NAME,…", value_delimiter = ',')]
     compare: Vec<String>,
     /// Also write the result as the next numbered run file, `DIR/NNN-<label>.json` (relative
@@ -89,6 +92,7 @@ fn eval_flags(args: EvalArgs) -> EvalFlags {
             backend_url: args.backend_url,
             embeddings: args.embeddings,
             allow_stale: args.allow_stale,
+            ..BackendFlags::default()
         },
         compare: args.compare,
         out: args.out,
@@ -165,7 +169,7 @@ fn run_eval_plain(paths: &Paths, options: &EvalOptions) -> Result<ExitCode> {
 /// `eval --backend NAME` (or any backend-only flag without `--compare`): through
 /// [`commands::eval_backend`].
 fn run_eval_with_backend(paths: &Paths, options: &BackendEvalOptions) -> Result<ExitCode> {
-    let backend = options.backend;
+    let backend = &options.backend;
     let json = options.json.clone();
     let outcome = commands::eval_backend(paths, options)?;
     print_eval_outcome(
@@ -198,10 +202,11 @@ fn run_eval_with_backend(paths: &Paths, options: &BackendEvalOptions) -> Result<
     Ok(ExitCode::SUCCESS)
 }
 
-/// `eval --compare a,b,c`: one table per backend on the same query set, one combined JSON.
+/// `eval --compare a,b,c`: one table per backend on the same query set, one combined JSON
+/// keyed by backend name.
 fn run_eval_compare(
     paths: &Paths,
-    backends: &[BackendKind],
+    backends: &[BackendSpec],
     common: &BackendEvalOptions,
     json: Option<&Path>,
 ) -> Result<ExitCode> {
@@ -211,7 +216,7 @@ fn run_eval_compare(
     for (backend, outcome) in &results {
         print_eval_outcome(
             paths,
-            *backend,
+            backend,
             outcome.page_count,
             outcome.searchable_count,
             outcome.k,
@@ -222,11 +227,11 @@ fn run_eval_compare(
             eprintln!("wrote {}", path.display());
         }
         if let Some(gate) = &outcome.gate {
-            print_gate(*backend, gate);
+            print_gate(backend, gate);
             failed_gate |= !gate.passed();
         }
         combined.insert(
-            (*backend).name().to_string(),
+            backend.name.clone(),
             serde_json::to_value(&outcome.summary).context("serialising the result")?,
         );
     }
@@ -247,7 +252,7 @@ fn run_eval_compare(
 
 fn print_eval_outcome(
     paths: &Paths,
-    backend: BackendKind,
+    backend: &BackendSpec,
     page_count: usize,
     searchable_count: usize,
     k: usize,
@@ -276,7 +281,7 @@ fn warn_unset_baseline(gate: &eval::Gate) {
     }
 }
 
-fn print_gate(backend: BackendKind, gate: &eval::Gate) {
+fn print_gate(backend: &BackendSpec, gate: &eval::Gate) {
     warn_unset_baseline(gate);
     let verdict = if gate.passed() { "ok" } else { "FAILED" };
     eprintln!(

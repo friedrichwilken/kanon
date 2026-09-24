@@ -37,7 +37,7 @@ Inputs, all optional:
 | `prepare` | | a shell command run first, e.g. one that builds or downloads the artifact |
 | `queries` | | query file; empty is the one named in the config |
 | `baseline` | `eval.json` | the result to gate against; missing means record only |
-| `backend` | | `bm25`, `bm25-tantivy`, `dense`, `hybrid` or `external` |
+| `backend` | | `bm25`, `bm25-tantivy`, `dense`, `hybrid`, `external` or a name from the config's `backends` |
 | `backend_url` | | the search endpoint for `backend: external` |
 | `runs_dir` | `runs` | where `eval --out` writes the numbered run file |
 | `commit_run` | `false` | commit the run file (and a passing baseline) on the default branch |

@@ -5,7 +5,9 @@
 //!
 //! `eval` selects one with `--backend NAME`, or several at once with `--compare a,b,c`; the
 //! numbers this produces decide which shape to run in production, not an argument from
-//! architecture.
+//! architecture. A name is a built-in kind ([`BackendKind`]) or an entry of the config's
+//! `backends:`; either way the command resolves it to a [`BackendSpec`], the name plus the
+//! kind and the settings that came with it, and the result records the name.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -77,8 +79,11 @@ pub enum BackendError {
     /// The external backend answered with a contract version newer than this kanon reads.
     #[error(transparent)]
     Contract(#[from] ContractError),
-    /// The requested backend name is not one of the five backends.
-    #[error("unknown backend {0:?}: expected bm25, bm25-tantivy, dense, hybrid or external")]
+    /// The requested backend name is neither one of the five kinds nor a configured name.
+    #[error(
+        "unknown backend {0:?}: expected bm25, bm25-tantivy, dense, hybrid, external or a name \
+         from the config's backends"
+    )]
     UnknownBackend(String),
 }
 
@@ -141,6 +146,56 @@ impl FromStr for BackendKind {
             "external" => Ok(BackendKind::External),
             other => Err(BackendError::UnknownBackend(other.to_string())),
         }
+    }
+}
+
+/// A backend as a command selects it: the name a result records, the kind that runs, and the
+/// settings that came with the name.
+///
+/// A built-in kind ([`BackendSpec::builtin`]) is named after itself and carries the command's
+/// `--backend-url`/`--embeddings`; a configured name (`backends:` in `kanon.yaml`) carries its
+/// own `url` and `embeddings`, so two names of the same kind can point at two services or two
+/// embeddings files and be compared in one run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackendSpec {
+    /// The name `--backend`/`--compare` was given and the result records.
+    pub name: String,
+    /// The shape that runs.
+    pub kind: BackendKind,
+    /// The search endpoint base URL (`external`).
+    pub url: Option<String>,
+    /// `embeddings.bin` (`dense`, `hybrid`); `None` for the workspace default.
+    pub embeddings: Option<PathBuf>,
+}
+
+impl BackendSpec {
+    /// A built-in kind under its own name, with no settings of its own.
+    pub fn builtin(kind: BackendKind) -> BackendSpec {
+        BackendSpec {
+            name: kind.name().to_string(),
+            kind,
+            url: None,
+            embeddings: None,
+        }
+    }
+
+    /// Whether this backend needs an embedder to run at all (`dense`, `hybrid`).
+    pub fn needs_embedder(&self) -> bool {
+        self.kind.needs_embedder()
+    }
+}
+
+/// `bm25` under its own name.
+impl Default for BackendSpec {
+    fn default() -> BackendSpec {
+        BackendSpec::builtin(BackendKind::default())
+    }
+}
+
+/// The name.
+impl fmt::Display for BackendSpec {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.name)
     }
 }
 
@@ -235,5 +290,31 @@ mod tests {
             "nope".parse::<BackendKind>().unwrap_err(),
             BackendError::UnknownBackend(_)
         ));
+    }
+
+    #[test]
+    fn the_config_lists_exactly_the_built_in_kinds() {
+        for name in crate::config::BUILTIN_BACKENDS {
+            assert!(name.parse::<BackendKind>().is_ok(), "{name}");
+        }
+        for kind in [
+            BackendKind::Bm25,
+            BackendKind::Bm25Tantivy,
+            BackendKind::Dense,
+            BackendKind::Hybrid,
+            BackendKind::External,
+        ] {
+            assert!(crate::config::BUILTIN_BACKENDS.contains(&kind.name()));
+        }
+    }
+
+    #[test]
+    fn a_built_in_spec_is_named_after_its_kind() {
+        let spec = BackendSpec::default();
+        assert_eq!(spec, BackendSpec::builtin(BackendKind::Bm25));
+        assert_eq!(spec.to_string(), "bm25");
+        assert!(spec.url.is_none() && spec.embeddings.is_none());
+        assert!(!spec.needs_embedder());
+        assert!(BackendSpec::builtin(BackendKind::Hybrid).needs_embedder());
     }
 }

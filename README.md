@@ -108,7 +108,7 @@ backends:
 
 `kanon eval --compare old,new` then prints one table per name and a combined JSON keyed
 `old` and `new`; each result records the name as its `backend`, so `report --eval-before
-old.json --eval-after new.json` shows the movement between them. A name is `[A-Za-z0-9_-]+`,
+old.json --eval-after new.json` compares them. A name is `[A-Za-z0-9_-]+`,
 may not shadow a built-in kind, and takes any of the five kinds: `external` needs `url`,
 `dense` and `hybrid` may set their own `embeddings` (relative to the config), the rest take
 nothing else. `--backend NAME`, `grade --backend NAME` and the config's `backend` and

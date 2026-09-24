@@ -12,7 +12,6 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::str::FromStr;
 
 use thiserror::Error;
 
@@ -29,6 +28,7 @@ mod tantivy;
 #[cfg(test)]
 mod testing;
 
+pub use crate::config::BackendKind;
 pub use bm25::Bm25Backend;
 pub use dense::DenseBackend;
 pub use external::ExternalBackend;
@@ -80,72 +80,14 @@ pub enum BackendError {
     #[error(transparent)]
     Contract(#[from] ContractError),
     /// The requested backend name is neither one of the five kinds nor a configured name.
-    #[error(
-        "unknown backend {0:?}: expected bm25, bm25-tantivy, dense, hybrid, external or a name \
-         from the config's backends"
-    )]
-    UnknownBackend(String),
+    #[error(transparent)]
+    UnknownBackend(#[from] crate::config::UnknownBackend),
 }
 
 /// A page-loading failure is reported as the [`IndexError`] it has always been.
 impl From<CorpusError> for BackendError {
     fn from(err: CorpusError) -> Self {
         BackendError::Index(IndexError::from(err))
-    }
-}
-
-/// One of the five retriever shapes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum BackendKind {
-    /// pinakes's hand-rolled `BM25Okapi` reference index (the default).
-    #[default]
-    Bm25,
-    /// The same units, scored by tantivy's own BM25 (`k1` 1.2, `b` 0.75).
-    Bm25Tantivy,
-    /// An embeddings file, queried by cosine similarity.
-    Dense,
-    /// Reciprocal rank fusion of `bm25` and `dense`.
-    Hybrid,
-    /// A consumer's own store, over HTTP.
-    External,
-}
-
-impl BackendKind {
-    /// The name used on the command line and recorded in eval results.
-    pub fn name(self) -> &'static str {
-        match self {
-            BackendKind::Bm25 => "bm25",
-            BackendKind::Bm25Tantivy => "bm25-tantivy",
-            BackendKind::Dense => "dense",
-            BackendKind::Hybrid => "hybrid",
-            BackendKind::External => "external",
-        }
-    }
-
-    /// Whether this backend needs an embedder to run at all (`dense`, `hybrid`).
-    pub fn needs_embedder(self) -> bool {
-        matches!(self, BackendKind::Dense | BackendKind::Hybrid)
-    }
-}
-
-impl fmt::Display for BackendKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.name())
-    }
-}
-
-impl FromStr for BackendKind {
-    type Err = BackendError;
-
-    fn from_str(name: &str) -> Result<BackendKind, BackendError> {
-        match name {
-            "bm25" => Ok(BackendKind::Bm25),
-            "bm25-tantivy" => Ok(BackendKind::Bm25Tantivy),
-            "dense" => Ok(BackendKind::Dense),
-            "hybrid" => Ok(BackendKind::Hybrid),
-            "external" => Ok(BackendKind::External),
-            other => Err(BackendError::UnknownBackend(other.to_string())),
-        }
     }
 }
 
@@ -276,36 +218,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn backend_kind_round_trips_through_its_name() {
-        for kind in [
-            BackendKind::Bm25,
-            BackendKind::Bm25Tantivy,
-            BackendKind::Dense,
-            BackendKind::Hybrid,
-            BackendKind::External,
-        ] {
-            assert_eq!(kind.name().parse::<BackendKind>().unwrap(), kind);
-        }
-        assert!(matches!(
-            "nope".parse::<BackendKind>().unwrap_err(),
-            BackendError::UnknownBackend(_)
-        ));
-    }
-
-    #[test]
-    fn the_config_lists_exactly_the_built_in_kinds() {
-        for name in crate::config::BUILTIN_BACKENDS {
-            assert!(name.parse::<BackendKind>().is_ok(), "{name}");
-        }
-        for kind in [
-            BackendKind::Bm25,
-            BackendKind::Bm25Tantivy,
-            BackendKind::Dense,
-            BackendKind::Hybrid,
-            BackendKind::External,
-        ] {
-            assert!(crate::config::BUILTIN_BACKENDS.contains(&kind.name()));
-        }
+    fn an_unknown_name_keeps_its_wording_through_backend_error() {
+        let err: BackendError = "nope".parse::<BackendKind>().unwrap_err().into();
+        assert_eq!(
+            err.to_string(),
+            "unknown backend \"nope\": expected bm25, bm25-tantivy, dense, hybrid, external or \
+             a name from the config's backends"
+        );
     }
 
     #[test]

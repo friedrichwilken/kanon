@@ -194,7 +194,8 @@ fn a_named_backend_works_alone_and_a_bad_name_or_config_is_exit_1() {
 }
 
 /// `grade --backend NAME` resolves the same names: a trail query goes to the `new` server,
-/// and the model call that follows fails fast because no `KANON_LLM_URL` is set.
+/// and the model call that follows fails fast, `KANON_LLM_URL` pointing at a local port nothing
+/// listens on (connection refused).
 #[test]
 fn grade_takes_a_named_backend() {
     let (dir, _old, new) = workspace();
@@ -206,7 +207,6 @@ fn grade_takes_a_named_backend() {
     let new_thread = std::thread::spawn(move || serve_one_search(&new, &[PAGE_ID]));
     let out = Command::new(env!("CARGO_BIN_EXE_kanon"))
         .current_dir(dir.path())
-        .env_remove("KANON_LLM_URL")
         .env_remove("PINAKES_LLM_URL")
         .env("KANON_LLM_URL", "http://127.0.0.1:9")
         .args([

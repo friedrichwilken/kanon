@@ -5,10 +5,10 @@
 //! keeps those keys under `eval:` in `pinakes.yaml` needs no `kanon.yaml`: [`load`] reads
 //! either form, and the CLI falls back to `pinakes.yaml` when `kanon.yaml` is absent.
 //!
-//! `backends:` names retrievers beyond the five built-in kinds: two running services, or two
-//! embeddings files, each under a name that `--backend` and `--compare` accept and the result
-//! records ([`NamedBackend`]). The entries are checked here, at parse time, so a config that
-//! loads is a config every command can use.
+//! `backends:` names retrievers beyond the five built-in kinds ([`BackendKind`]): two running
+//! services, or two embeddings files, each under a name that `--backend` and `--compare` accept
+//! and the result records ([`NamedBackend`]). The entries are checked here, at parse time, so a
+//! config that loads is a config every command can use.
 //!
 //! Source priorities for the mirror rule ([`pinakes::index::Priorities`]) come from
 //! `pinakes.yaml` alone; [`priorities`] reads just the `sources[].name` and `priority` keys,
@@ -31,10 +31,70 @@ pub const DEFAULT_K: usize = 10;
 pub const DEFAULT_MAX_RECALL_DROP: f64 = 0.05;
 /// Default minimum share of queries that must be held out (`holdout_min`).
 pub const DEFAULT_HOLDOUT_MIN: f64 = 0.2;
-/// The built-in backend kinds, as `type:` under `backends:` names them and as `--backend`
-/// accepts them; a configured name may not shadow one. `crate::backend::BackendKind` is the
-/// same list (a test there keeps the two in step; this module depends on nothing in the crate).
-pub const BUILTIN_BACKENDS: [&str; 5] = ["bm25", "bm25-tantivy", "dense", "hybrid", "external"];
+/// One of the five retriever shapes, as `backend`, `--backend`, `--compare` and `type:` under
+/// `backends:` name them (the `backend` module re-exports it and builds them).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum BackendKind {
+    /// pinakes's hand-rolled `BM25Okapi` reference index (the default).
+    #[default]
+    Bm25,
+    /// The same units, scored by tantivy's own BM25 (`k1` 1.2, `b` 0.75).
+    Bm25Tantivy,
+    /// An embeddings file, queried by cosine similarity.
+    Dense,
+    /// Reciprocal rank fusion of `bm25` and `dense`.
+    Hybrid,
+    /// A consumer's own store, over HTTP.
+    External,
+}
+
+impl BackendKind {
+    /// The name used on the command line, in the config and in eval results.
+    pub fn name(self) -> &'static str {
+        match self {
+            BackendKind::Bm25 => "bm25",
+            BackendKind::Bm25Tantivy => "bm25-tantivy",
+            BackendKind::Dense => "dense",
+            BackendKind::Hybrid => "hybrid",
+            BackendKind::External => "external",
+        }
+    }
+
+    /// Whether this backend needs an embedder to run at all (`dense`, `hybrid`).
+    pub fn needs_embedder(self) -> bool {
+        matches!(self, BackendKind::Dense | BackendKind::Hybrid)
+    }
+}
+
+impl fmt::Display for BackendKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+/// A backend name that is neither one of the five kinds nor a configured name.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[error(
+    "unknown backend {0:?}: expected bm25, bm25-tantivy, dense, hybrid, external or a name \
+     from the config's backends"
+)]
+pub struct UnknownBackend(pub String);
+
+impl FromStr for BackendKind {
+    type Err = UnknownBackend;
+
+    fn from_str(name: &str) -> Result<BackendKind, UnknownBackend> {
+        match name {
+            "bm25" => Ok(BackendKind::Bm25),
+            "bm25-tantivy" => Ok(BackendKind::Bm25Tantivy),
+            "dense" => Ok(BackendKind::Dense),
+            "hybrid" => Ok(BackendKind::Hybrid),
+            "external" => Ok(BackendKind::External),
+            other => Err(UnknownBackend(other.to_string())),
+        }
+    }
+}
 
 /// The tuning metric `eval --gate` compares with the baseline (`gate_metric`, `--gate-metric`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -149,16 +209,18 @@ pub enum ConfigError {
 
 /// One entry of `backends:`: a retriever under a name of the user's choosing.
 ///
-/// `type` is one of [`BUILTIN_BACKENDS`]. `url` is required for `external` and rejected for
-/// every other type; `embeddings` (relative to the config file) is accepted for `dense` and
-/// `hybrid` only, where it overrides the top-level `embeddings`. This is checked when the
-/// config is parsed.
+/// `type` is a [`BackendKind`]. `url` is required for `external` and rejected for every other
+/// type; `embeddings` (relative to the config file) is accepted for `dense` and `hybrid` only,
+/// where it overrides the top-level `embeddings`. This is checked when the config is parsed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(
+    deny_unknown_fields,
+    expecting = "a map with type, and url or embeddings"
+)]
 pub struct NamedBackend {
     /// The built-in kind this name runs as.
     #[serde(rename = "type")]
-    pub kind: String,
+    pub kind: BackendKind,
     /// The search endpoint base URL (`external`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
@@ -318,8 +380,8 @@ fn is_backend_name(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
-/// Check every `backends:` entry: the name's characters, that it shadows no built-in kind,
-/// that its type is a built-in kind, and that it carries exactly the keys its type uses.
+/// Check every `backends:` entry: the name's characters, that it shadows no built-in kind, and
+/// that it carries exactly the keys its type uses.
 fn validate_backends(
     path: &Path,
     backends: &BTreeMap<String, NamedBackend>,
@@ -336,20 +398,11 @@ fn validate_backends(
                 "invalid name: expected [A-Za-z0-9_-]+".to_string(),
             ));
         }
-        if BUILTIN_BACKENDS.contains(&name.as_str()) {
+        if name.parse::<BackendKind>().is_ok() {
             return Err(err(name, format!("shadows the built-in backend {name}")));
         }
-        let kind = backend.kind.as_str();
-        if !BUILTIN_BACKENDS.contains(&kind) {
-            return Err(err(
-                name,
-                format!(
-                    "unknown type {kind:?}: expected {}",
-                    BUILTIN_BACKENDS.join(", ")
-                ),
-            ));
-        }
-        let external = kind == "external";
+        let kind = backend.kind;
+        let external = kind == BackendKind::External;
         if external && backend.url.is_none() {
             return Err(err(name, "type external needs a url".to_string()));
         }
@@ -359,7 +412,7 @@ fn validate_backends(
                 format!("url is only for type external, not {kind}"),
             ));
         }
-        if backend.embeddings.is_some() && !matches!(kind, "dense" | "hybrid") {
+        if backend.embeddings.is_some() && !kind.needs_embedder() {
             return Err(err(
                 name,
                 format!("embeddings is only for type dense or hybrid, not {kind}"),
@@ -524,14 +577,14 @@ backends:
         assert_eq!(config.compare, ["old", "new"]);
         assert_eq!(config.backends.len(), 4);
         let old = &config.backends["old"];
-        assert_eq!(old.kind, "external");
+        assert_eq!(old.kind, BackendKind::External);
         assert_eq!(old.url.as_deref(), Some("http://localhost:8080"));
         assert!(old.embeddings.is_none());
         assert_eq!(
             config.backends["vectors-v2"].embeddings.as_deref(),
             Some(Path::new("v2/embeddings.bin"))
         );
-        assert_eq!(config.backends["fused_v2"].kind, "hybrid");
+        assert_eq!(config.backends["fused_v2"].kind, BackendKind::Hybrid);
         let text = serde_yaml_ng::to_string(&config).unwrap();
         assert_eq!(
             from_yaml(path, &text).unwrap().unwrap(),
@@ -580,11 +633,6 @@ backends:
                 "invalid name: expected [A-Za-z0-9_-]+",
             ),
             (
-                "queries: q\nbackends:\n  old:\n    type: sparse\n",
-                "old",
-                "unknown type \"sparse\": expected bm25, bm25-tantivy, dense, hybrid, external",
-            ),
-            (
                 "queries: q\nbackends:\n  old:\n    type: bm25\n    url: http://x\n",
                 "old",
                 "url is only for type external, not bm25",
@@ -608,7 +656,22 @@ backends:
             err,
             "kanon.yaml: backend \"old\": type external needs a url"
         );
-        // An unknown key under an entry, or a missing type, is a YAML shape error.
+        // An unknown type, an unknown key under an entry, a missing type, or a scalar where the
+        // entry should be a map, is a YAML shape error.
+        let err = from_yaml(path, "queries: q\nbackends:\n  old:\n    type: sparse\n").unwrap_err();
+        assert!(matches!(err, ConfigError::Yaml { .. }), "{err}");
+        assert!(
+            err.to_string()
+                .contains("expected one of `bm25`, `bm25-tantivy`, `dense`, `hybrid`, `external`"),
+            "{err}"
+        );
+        let err = from_yaml(path, "queries: q\nbackends:\n  old: external\n").unwrap_err();
+        assert!(matches!(err, ConfigError::Yaml { .. }), "{err}");
+        assert!(
+            err.to_string()
+                .contains("a map with type, and url or embeddings"),
+            "{err}"
+        );
         assert!(matches!(
             from_yaml(
                 path,
@@ -647,6 +710,27 @@ backends:
             .unwrap_err(),
             ConfigError::Yaml { .. }
         ));
+    }
+
+    #[test]
+    fn backend_kind_round_trips_through_its_name() {
+        for kind in [
+            BackendKind::Bm25,
+            BackendKind::Bm25Tantivy,
+            BackendKind::Dense,
+            BackendKind::Hybrid,
+            BackendKind::External,
+        ] {
+            assert_eq!(kind.name().parse::<BackendKind>().unwrap(), kind);
+            assert_eq!(kind.to_string(), kind.name());
+            let yaml = serde_yaml_ng::to_string(&kind).unwrap();
+            assert_eq!(yaml.trim(), kind.name(), "serde uses the same name");
+        }
+        assert_eq!(
+            "nope".parse::<BackendKind>().unwrap_err(),
+            UnknownBackend("nope".to_string())
+        );
+        assert!(BackendKind::Hybrid.needs_embedder() && !BackendKind::Bm25.needs_embedder());
     }
 
     #[test]

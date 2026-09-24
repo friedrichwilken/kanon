@@ -3,7 +3,9 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use crate::backend::{self, Backend, BackendConfig, BackendError, BackendKind, BackendSpec};
-use crate::config::{Config, DEFAULT_K, DEFAULT_MAX_RECALL_DROP, GateMetric, NamedBackend};
+use crate::config::{
+    Config, DEFAULT_K, DEFAULT_MAX_RECALL_DROP, GateMetric, NamedBackend, UnknownBackend,
+};
 use crate::embed::{EmbedError, Embedder, HttpEmbedder};
 use crate::error::CommandError;
 use crate::eval::{self, Delta, EvalSummary, Gate};
@@ -513,10 +515,10 @@ impl BackendFlags {
         let named = self
             .backends
             .get(name)
-            .ok_or_else(|| BackendError::UnknownBackend(name.to_string()))?;
+            .ok_or_else(|| UnknownBackend(name.to_string()))?;
         Ok(BackendSpec {
             name: name.to_string(),
-            kind: named.kind.parse()?,
+            kind: named.kind,
             url: named.url.clone(),
             embeddings: named.embeddings.clone().or_else(|| self.embeddings.clone()),
         })
@@ -1008,14 +1010,14 @@ mod tests {
         assert_eq!(named("hybrid").spec().unwrap().kind, BackendKind::Hybrid);
         assert!(matches!(
             named("nope").spec().unwrap_err(),
-            BackendError::UnknownBackend(name) if name == "nope"
+            BackendError::UnknownBackend(UnknownBackend(name)) if name == "nope"
         ));
     }
 
     /// The config's `backends:` as the flags carry them after the defaults are applied.
     fn configured() -> BackendFlags {
-        let entry = |kind: &str, url: Option<&str>, embeddings: Option<&str>| NamedBackend {
-            kind: kind.to_string(),
+        let entry = |kind: BackendKind, url: Option<&str>, embeddings: Option<&str>| NamedBackend {
+            kind,
             url: url.map(str::to_string),
             embeddings: embeddings.map(PathBuf::from),
         };
@@ -1023,9 +1025,15 @@ mod tests {
             backend_url: Some("https://flag.test".to_string()),
             embeddings: Some(PathBuf::from("/flag/embeddings.bin")),
             backends: [
-                ("old", entry("external", Some("https://old.test"), None)),
-                ("v2", entry("dense", None, Some("/cfg/v2/embeddings.bin"))),
-                ("fused", entry("hybrid", None, None)),
+                (
+                    "old",
+                    entry(BackendKind::External, Some("https://old.test"), None),
+                ),
+                (
+                    "v2",
+                    entry(BackendKind::Dense, None, Some("/cfg/v2/embeddings.bin")),
+                ),
+                ("fused", entry(BackendKind::Hybrid, None, None)),
             ]
             .into_iter()
             .map(|(name, backend)| (name.to_string(), backend))
@@ -1072,7 +1080,7 @@ mod tests {
         );
         assert!(matches!(
             flags.resolve("nope").unwrap_err(),
-            BackendError::UnknownBackend(name) if name == "nope"
+            BackendError::UnknownBackend(UnknownBackend(name)) if name == "nope"
         ));
         assert!(!flags.is_empty());
         assert!(
@@ -1291,7 +1299,7 @@ mod tests {
             ..EvalFlags::default()
         };
         match eval_plan(flags) {
-            Err(CommandError::Backend(BackendError::UnknownBackend(name))) => {
+            Err(CommandError::Backend(BackendError::UnknownBackend(UnknownBackend(name)))) => {
                 assert_eq!(name, "nope");
             }
             _ => panic!("expected an unknown-backend error"),

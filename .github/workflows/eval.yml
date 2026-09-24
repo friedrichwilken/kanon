@@ -45,8 +45,8 @@ on:
         default: eval.json
       backend:
         description: >-
-          Retriever backend (bm25, bm25-tantivy, dense, hybrid, external); empty means
-          kanon's default, bm25.
+          Retriever backend (bm25, bm25-tantivy, dense, hybrid, external, or a name from the
+          config's `backends`); empty means kanon's default, bm25.
         type: string
         default: ""
       backend_url:

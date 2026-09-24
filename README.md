@@ -65,8 +65,10 @@ A `kanon.yaml` next to the artifact fixes what a bare `kanon eval` measures; a `
 with an `eval:` block works as before. `eval --json baseline.json` records a run,
 `eval --gate baseline.json` exits 2 when tuning recall@5 drops by more than `max_recall_drop`,
 and `eval --compare bm25,bm25-tantivy,dense,hybrid,external` scores several retrievers over
-the same query set. Model endpoints come from `KANON_EMBED_URL` and `KANON_LLM_URL` (the
-`PINAKES_*` names still work).
+the same query set. `grade --backend NAME` takes the same backend flags and config defaults,
+so a trail from a served retriever is graded on the candidates that retriever returns. Model
+endpoints come from `KANON_EMBED_URL` and `KANON_LLM_URL` (the `PINAKES_*` names still
+work).
 
 `eval --out runs/` also writes the result as `runs/NNN-<label>.json`, numbered after the last
 run in the directory and labelled with `--label` or the git short SHA, with the backend, the

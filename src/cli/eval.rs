@@ -6,7 +6,9 @@ use anyhow::{Context, Result};
 use clap::Args;
 
 use kanon::backend::BackendKind;
-use kanon::commands::{self, BackendEvalOptions, EvalFlags, EvalOptions, EvalPlan, Paths};
+use kanon::commands::{
+    self, BackendEvalOptions, BackendFlags, EvalFlags, EvalOptions, EvalPlan, Paths,
+};
 use kanon::eval;
 
 use crate::cli::EXIT_GATE;
@@ -72,10 +74,12 @@ fn eval_flags(args: EvalArgs) -> EvalFlags {
         gate: args.gate,
         with: args.with,
         without: args.without,
-        backend: args.backend,
-        backend_url: args.backend_url,
-        embeddings: args.embeddings,
-        allow_stale: args.allow_stale,
+        backend: BackendFlags {
+            backend: args.backend,
+            backend_url: args.backend_url,
+            embeddings: args.embeddings,
+            allow_stale: args.allow_stale,
+        },
         compare: args.compare,
         out: args.out,
         label: args.label,

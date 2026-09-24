@@ -66,7 +66,7 @@ pub(super) fn dense_config(
 /// Read one HTTP/1.1 request off `stream`, answering `Expect: 100-continue` (which ureq
 /// sends before a request body) so the client proceeds to send it, then returning headers
 /// and body as one string once `Content-Length` bytes of body have arrived.
-pub(super) fn read_http_request(stream: &mut std::net::TcpStream) -> String {
+pub(crate) fn read_http_request(stream: &mut std::net::TcpStream) -> String {
     use std::io::{Read as _, Write as _};
 
     let mut buf = Vec::new();

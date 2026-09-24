@@ -25,7 +25,7 @@ mod external;
 mod hybrid;
 mod tantivy;
 #[cfg(test)]
-mod testing;
+pub(crate) mod testing;
 
 pub use bm25::Bm25Backend;
 pub use dense::DenseBackend;

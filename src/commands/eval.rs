@@ -278,23 +278,26 @@ fn evaluate_backend(
     Ok(eval::summarise(rows))
 }
 
-fn backend_config(
+/// The [`BackendConfig`] for a command's backend flags, shared by `eval --backend` and
+/// `grade`: `embeddings` defaults to the workspace's `embeddings.bin`, and `embeddings.json`
+/// sits next to whichever file is used.
+pub(super) fn backend_config(
     paths: &Paths,
-    options: &BackendEvalOptions,
     priorities: Priorities,
+    backend_url: Option<&str>,
+    embeddings: Option<&Path>,
+    allow_stale: bool,
+    embedder: Option<Rc<dyn Embedder>>,
 ) -> BackendConfig {
-    let embeddings_bin = options
-        .embeddings
-        .clone()
-        .unwrap_or_else(|| paths.embeddings.clone());
+    let embeddings_bin = embeddings.map_or_else(|| paths.embeddings.clone(), Path::to_path_buf);
     let embeddings_json = embeddings_bin.with_extension("json");
     BackendConfig {
         priorities,
         embeddings_bin,
         embeddings_json,
-        allow_stale: options.allow_stale,
-        embedder: options.embedder.clone(),
-        backend_url: options.backend_url.clone(),
+        allow_stale,
+        embedder,
+        backend_url: backend_url.map(str::to_string),
     }
 }
 
@@ -339,7 +342,14 @@ pub fn eval_backend(
             Some(delta),
         )
     } else {
-        let config = backend_config(paths, options, priorities);
+        let config = backend_config(
+            paths,
+            priorities,
+            options.backend_url.as_deref(),
+            options.embeddings.as_deref(),
+            options.allow_stale,
+            options.embedder.clone(),
+        );
         let built = backend::build(options.backend, &paths.artifact, &config)?;
         let summary =
             evaluate_backend(built.as_ref(), &queries, k)?.with_backend(options.backend.name());
@@ -407,6 +417,76 @@ pub fn eval_compare(
 // Decision layer: which of eval / eval_backend / eval_compare a set of flags selects.
 // -------------------------------------------------------------------------------------------
 
+/// The backend-selecting flags `eval` and `grade` share (`--backend`, `--backend-url`,
+/// `--embeddings`, `--allow-stale`), as given on the command line and before the config's
+/// defaults are applied.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BackendFlags {
+    /// `--backend`.
+    pub backend: Option<String>,
+    /// `--backend-url`.
+    pub backend_url: Option<String>,
+    /// `--embeddings`.
+    pub embeddings: Option<PathBuf>,
+    /// `--allow-stale`.
+    pub allow_stale: bool,
+}
+
+impl BackendFlags {
+    /// The named backend, `bm25` when none was named; an unknown name is
+    /// [`BackendError::UnknownBackend`].
+    pub fn kind(&self) -> Result<BackendKind, BackendError> {
+        self.backend
+            .as_deref()
+            .map_or(Ok(BackendKind::default()), str::parse)
+    }
+
+    /// Whether none of the flags was given.
+    pub fn is_empty(&self) -> bool {
+        *self == BackendFlags::default()
+    }
+}
+
+/// Fill the config's `backend`, `backend_url` and `embeddings` (relative to the config file)
+/// into whichever flags were left unset. A flag always wins. `eval` and `grade` both go
+/// through here, so the two commands read the config the same way.
+pub fn apply_backend_config_defaults(
+    paths: &Paths,
+    flags: &mut BackendFlags,
+) -> Result<(), CommandError> {
+    if let Some(config) = load_config(paths)? {
+        fill_backend_defaults(paths, config, flags);
+    }
+    Ok(())
+}
+
+/// The config when there is a config file (and it has one); `None` otherwise.
+fn load_config(paths: &Paths) -> Result<Option<Config>, CommandError> {
+    if !paths.config.is_file() {
+        return Ok(None);
+    }
+    Ok(crate::config::load(&paths.config)?)
+}
+
+fn fill_backend_defaults(paths: &Paths, config: Config, flags: &mut BackendFlags) {
+    if flags.backend.is_none() {
+        flags.backend = config.backend;
+    }
+    if flags.backend_url.is_none() {
+        flags.backend_url = config.backend_url;
+    }
+    if flags.embeddings.is_none() {
+        let dir = paths.config.parent().unwrap_or(Path::new("."));
+        flags.embeddings = config.embeddings.map(|path| {
+            if path.is_absolute() {
+                path
+            } else {
+                dir.join(path)
+            }
+        });
+    }
+}
+
 /// Eval flags as given on the command line, before the config's defaults are applied
 /// and before `--backend`/`--compare` names are parsed. One field per CLI flag.
 #[derive(Debug, Clone, Default)]
@@ -423,14 +503,8 @@ pub struct EvalFlags {
     pub with: Vec<String>,
     /// `--without`.
     pub without: Vec<String>,
-    /// `--backend`.
-    pub backend: Option<String>,
-    /// `--backend-url`.
-    pub backend_url: Option<String>,
-    /// `--embeddings`.
-    pub embeddings: Option<PathBuf>,
-    /// `--allow-stale`.
-    pub allow_stale: bool,
+    /// `--backend`, `--backend-url`, `--embeddings`, `--allow-stale`.
+    pub backend: BackendFlags,
     /// `--compare`.
     pub compare: Vec<String>,
     /// `--out`.
@@ -446,31 +520,13 @@ pub fn apply_eval_config_defaults(
     paths: &Paths,
     flags: &mut EvalFlags,
 ) -> Result<(), CommandError> {
-    if !paths.config.is_file() {
-        return Ok(());
-    }
-    let Some(eval_config) = crate::config::load(&paths.config)? else {
+    let Some(eval_config) = load_config(paths)? else {
         return Ok(());
     };
-    if flags.compare.is_empty() && flags.backend.is_none() {
-        flags.compare = eval_config.compare;
+    if flags.compare.is_empty() && flags.backend.backend.is_none() {
+        flags.compare.clone_from(&eval_config.compare);
     }
-    if flags.backend.is_none() {
-        flags.backend = eval_config.backend;
-    }
-    if flags.backend_url.is_none() {
-        flags.backend_url = eval_config.backend_url;
-    }
-    if flags.embeddings.is_none() {
-        let dir = paths.config.parent().unwrap_or(Path::new("."));
-        flags.embeddings = eval_config.embeddings.map(|path| {
-            if path.is_absolute() {
-                path
-            } else {
-                dir.join(path)
-            }
-        });
-    }
+    fill_backend_defaults(paths, eval_config, &mut flags.backend);
     Ok(())
 }
 
@@ -534,9 +590,9 @@ pub fn eval_plan(flags: EvalFlags) -> Result<EvalPlan, CommandError> {
             with: flags.with,
             without: flags.without,
             backend: BackendKind::default(),
-            backend_url: flags.backend_url,
-            embeddings: flags.embeddings,
-            allow_stale: flags.allow_stale,
+            backend_url: flags.backend.backend_url,
+            embeddings: flags.backend.embeddings,
+            allow_stale: flags.backend.allow_stale,
             embedder: None,
             out: flags.out,
             label: flags.label,
@@ -547,11 +603,7 @@ pub fn eval_plan(flags: EvalFlags) -> Result<EvalPlan, CommandError> {
             json: flags.json,
         });
     }
-    if flags.backend.is_none()
-        && flags.backend_url.is_none()
-        && flags.embeddings.is_none()
-        && !flags.allow_stale
-    {
+    if flags.backend.is_empty() {
         return Ok(EvalPlan::Plain(EvalOptions {
             queries: flags.queries,
             k: flags.k,
@@ -563,7 +615,7 @@ pub fn eval_plan(flags: EvalFlags) -> Result<EvalPlan, CommandError> {
             label: flags.label,
         }));
     }
-    let backend: BackendKind = flags.backend.as_deref().unwrap_or("bm25").parse()?;
+    let backend = flags.backend.kind()?;
     Ok(EvalPlan::Backend(BackendEvalOptions {
         queries: flags.queries,
         k: flags.k,
@@ -572,9 +624,9 @@ pub fn eval_plan(flags: EvalFlags) -> Result<EvalPlan, CommandError> {
         with: flags.with,
         without: flags.without,
         backend,
-        backend_url: flags.backend_url,
-        embeddings: flags.embeddings,
-        allow_stale: flags.allow_stale,
+        backend_url: flags.backend.backend_url,
+        embeddings: flags.backend.embeddings,
+        allow_stale: flags.backend.allow_stale,
         embedder: None,
         out: flags.out,
         label: flags.label,
@@ -807,6 +859,55 @@ mod tests {
         assert_eq!(outcome.page_count, 1);
     }
 
+    /// `--backend NAME` alone.
+    fn named(backend: &str) -> BackendFlags {
+        BackendFlags {
+            backend: Some(backend.to_string()),
+            ..BackendFlags::default()
+        }
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // BackendFlags / apply_backend_config_defaults
+    // -----------------------------------------------------------------------------------------
+
+    #[test]
+    fn backend_flags_kind_defaults_to_bm25_and_rejects_an_unknown_name() {
+        assert_eq!(BackendFlags::default().kind().unwrap(), BackendKind::Bm25);
+        assert_eq!(named("hybrid").kind().unwrap(), BackendKind::Hybrid);
+        assert!(matches!(
+            named("nope").kind().unwrap_err(),
+            BackendError::UnknownBackend(name) if name == "nope"
+        ));
+    }
+
+    #[test]
+    fn apply_backend_config_defaults_fills_what_the_flags_leave_unset() {
+        let (dir, paths) = eval_workspace();
+        let mut flags = BackendFlags::default();
+        apply_backend_config_defaults(&paths, &mut flags).unwrap();
+        assert!(flags.is_empty(), "no config file, nothing to fill");
+
+        fs::write(
+            &paths.config,
+            "queries: queries.jsonl\nbackend: external\nbackend_url: https://example.test\n\
+             embeddings: custom/embeddings.bin\n",
+        )
+        .unwrap();
+        let mut flags = named("bm25-tantivy");
+        apply_backend_config_defaults(&paths, &mut flags).unwrap();
+        assert_eq!(
+            flags,
+            BackendFlags {
+                backend: Some("bm25-tantivy".to_string()),
+                backend_url: Some("https://example.test".to_string()),
+                embeddings: Some(dir.path().join("custom/embeddings.bin")),
+                allow_stale: false,
+            },
+            "the flag wins, the config fills the rest"
+        );
+    }
+
     // -----------------------------------------------------------------------------------------
     // apply_eval_config_defaults
     // -----------------------------------------------------------------------------------------
@@ -817,7 +918,7 @@ mod tests {
         assert!(!paths.config.is_file());
         let mut flags = EvalFlags::default();
         apply_eval_config_defaults(&paths, &mut flags).unwrap();
-        assert!(flags.backend.is_none() && flags.compare.is_empty());
+        assert!(flags.backend.is_empty() && flags.compare.is_empty());
     }
 
     #[test]
@@ -831,11 +932,14 @@ mod tests {
         .unwrap();
         let mut flags = EvalFlags::default();
         apply_eval_config_defaults(&paths, &mut flags).unwrap();
-        assert_eq!(flags.backend.as_deref(), Some("dense"));
-        assert_eq!(flags.backend_url.as_deref(), Some("https://example.test"));
         assert_eq!(
-            flags.embeddings,
-            Some(dir.path().join("custom/embeddings.bin"))
+            flags.backend,
+            BackendFlags {
+                backend: Some("dense".to_string()),
+                backend_url: Some("https://example.test".to_string()),
+                embeddings: Some(dir.path().join("custom/embeddings.bin")),
+                allow_stale: false,
+            }
         );
     }
 
@@ -848,11 +952,15 @@ mod tests {
         )
         .unwrap();
         let mut flags = EvalFlags {
-            backend: Some("dense".to_string()),
+            backend: named("dense"),
             ..EvalFlags::default()
         };
         apply_eval_config_defaults(&paths, &mut flags).unwrap();
-        assert_eq!(flags.backend.as_deref(), Some("dense"), "the flag wins");
+        assert_eq!(
+            flags.backend.backend.as_deref(),
+            Some("dense"),
+            "the flag wins"
+        );
     }
 
     #[test]
@@ -869,7 +977,7 @@ mod tests {
         assert_eq!(bare.compare, vec!["bm25".to_string(), "dense".to_string()]);
 
         let mut with_backend_flag = EvalFlags {
-            backend: Some("bm25".to_string()),
+            backend: named("bm25"),
             ..EvalFlags::default()
         };
         apply_eval_config_defaults(&paths, &mut with_backend_flag).unwrap();
@@ -894,7 +1002,7 @@ mod tests {
     #[test]
     fn eval_plan_selects_the_named_backend() {
         let flags = EvalFlags {
-            backend: Some("bm25-tantivy".to_string()),
+            backend: named("bm25-tantivy"),
             ..EvalFlags::default()
         };
         match eval_plan(flags).unwrap() {
@@ -906,7 +1014,10 @@ mod tests {
     #[test]
     fn eval_plan_allow_stale_alone_still_selects_bm25_through_the_backend_path() {
         let flags = EvalFlags {
-            allow_stale: true,
+            backend: BackendFlags {
+                allow_stale: true,
+                ..BackendFlags::default()
+            },
             ..EvalFlags::default()
         };
         match eval_plan(flags).unwrap() {
@@ -922,7 +1033,7 @@ mod tests {
     fn eval_plan_compare_wins_over_a_backend_flag() {
         let flags = EvalFlags {
             compare: vec!["bm25".to_string(), "dense".to_string()],
-            backend: Some("bm25-tantivy".to_string()),
+            backend: named("bm25-tantivy"),
             ..EvalFlags::default()
         };
         match eval_plan(flags).unwrap() {
@@ -938,7 +1049,7 @@ mod tests {
         // `EvalPlan` holds an `Rc<dyn Embedder>` (via `BackendEvalOptions`), which is not
         // `Debug`, so match manually instead of `unwrap_err()`.
         let flags = EvalFlags {
-            backend: Some("nope".to_string()),
+            backend: named("nope"),
             ..EvalFlags::default()
         };
         match eval_plan(flags) {
@@ -959,12 +1070,12 @@ mod tests {
     fn eval_plan_needs_embedder_only_for_dense_or_hybrid() {
         assert!(!eval_plan(EvalFlags::default()).unwrap().needs_embedder());
         let bm25 = EvalFlags {
-            backend: Some("bm25".to_string()),
+            backend: named("bm25"),
             ..EvalFlags::default()
         };
         assert!(!eval_plan(bm25).unwrap().needs_embedder());
         let dense = EvalFlags {
-            backend: Some("dense".to_string()),
+            backend: named("dense"),
             ..EvalFlags::default()
         };
         assert!(eval_plan(dense).unwrap().needs_embedder());
@@ -988,7 +1099,7 @@ mod tests {
         assert!(matches!(plain, EvalPlan::Plain(_)));
 
         let dense = EvalFlags {
-            backend: Some("dense".to_string()),
+            backend: named("dense"),
             ..EvalFlags::default()
         };
         match eval_plan(dense).unwrap().with_embedder(fake_embedder()) {

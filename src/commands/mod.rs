@@ -19,9 +19,9 @@ pub use crate::workspace::Paths;
 
 pub use embed::{EmbedOptions, EmbedOutcome, embed};
 pub use eval::{
-    BackendEvalOptions, BackendEvalOutcome, EvalFlags, EvalOptions, EvalOutcome, EvalPlan,
-    apply_eval_config_defaults, eval, eval_backend, eval_compare, eval_embedder_from_env,
-    eval_plan,
+    BackendEvalOptions, BackendEvalOutcome, BackendFlags, EvalFlags, EvalOptions, EvalOutcome,
+    EvalPlan, apply_backend_config_defaults, apply_eval_config_defaults, eval, eval_backend,
+    eval_compare, eval_embedder_from_env, eval_plan,
 };
 pub use grade::{GradeOptions, GradeOutcome, grade};
 pub use history::{DEFAULT_RUNS_DIR, HistoryOptions, HistoryOutcome, history};

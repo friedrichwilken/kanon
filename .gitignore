@@ -19,3 +19,17 @@ target
 #  and can be added to the global gitignore or merged into this file.  For a more nuclear
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
+
+# Outputs of eval and report
+/report.md
+eval*.json
+!/tests/fixtures/**/*.json
+embeddings.bin
+embeddings.json
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~

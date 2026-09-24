@@ -67,8 +67,8 @@ pub struct QueriesAcceptOptions {
 }
 
 /// Run `queries add --from`: append the chosen suggestions through the same check as a
-/// hand-written row, keeping their `origin`. Nothing is written when an id is not in the file
-/// or an expected id is not in the manifest.
+/// hand-written row, keeping their `origin`. Nothing is written when an id is not in the file,
+/// is already in the query file, or an expected id is not in the manifest.
 pub fn queries_accept(
     paths: &Paths,
     options: &QueriesAcceptOptions,
@@ -93,6 +93,17 @@ pub fn queries_accept(
         }
         chosen
     };
+    let existing = if queries_path.is_file() {
+        eval::load_queries(&queries_path)?
+    } else {
+        Vec::new()
+    };
+    if let Some(row) = chosen
+        .iter()
+        .find(|row| existing.iter().any(|query| query.id == row.id))
+    {
+        return Err(queries::QueriesError::DuplicateId(row.id.clone()).into());
+    }
     let new: Vec<NewQuery> = chosen
         .into_iter()
         .map(|row| NewQuery {
@@ -129,18 +140,32 @@ pub struct QueriesSuggestOutcome {
     pub suggestions: Vec<Suggestion>,
     /// Pages sampled and sent to the model.
     pub pages: usize,
-    /// Model answers dropped (empty, quoting the page title, or a repeat).
-    pub rejected: usize,
+    /// Model answers dropped for quoting the page title.
+    pub title_quotes: usize,
+    /// Model answers dropped for being empty.
+    pub empty: usize,
+    /// Model answers dropped as a repeat of a query already suggested.
+    pub repeats: usize,
+    /// Pages skipped because the reply was not the expected JSON.
+    pub failed: usize,
 }
 
 /// Run `queries suggest`: sample pages of the artifact, ask the model for the questions each
-/// one answers and write them to the suggestions file, never to `queries.jsonl`.
+/// one answers and write them to the suggestions file, never to `queries.jsonl`. The endpoint
+/// and the output directory are checked before the first model call.
 pub fn queries_suggest(
     paths: &Paths,
     options: &QueriesSuggestOptions,
     transport: &dyn ChatTransport,
 ) -> Result<QueriesSuggestOutcome, CommandError> {
     let config = crate::llm::config_from_env(options.model.clone())?;
+    if let Some(dir) = options
+        .out
+        .parent()
+        .filter(|dir| !dir.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(dir).map_err(io_err(dir))?;
+    }
     let priorities = settings(paths)?.priorities;
     let mut pages = index::load_pages(&paths.artifact, &priorities)?;
     index::mark_mirrors(&mut pages);
@@ -150,7 +175,10 @@ pub fn queries_suggest(
     Ok(QueriesSuggestOutcome {
         suggestions: suggested.rows,
         pages: sampled.len(),
-        rejected: suggested.rejected,
+        title_quotes: suggested.title_quotes,
+        empty: suggested.empty,
+        repeats: suggested.repeats,
+        failed: suggested.failed,
     })
 }
 
@@ -320,7 +348,8 @@ mod tests {
         use pinakes::llm::testing::{Scripted, ScriptedTransport, completion};
 
         let (dir, paths) = eval_workspace();
-        let out = dir.path().join("suggestions.jsonl");
+        // A directory that does not exist yet: created before the first model call.
+        let out = dir.path().join("scratch").join("suggestions.jsonl");
         let options = QueriesSuggestOptions {
             n: 10,
             per_source: None,
@@ -341,18 +370,19 @@ mod tests {
             let err = queries_suggest(&paths, &options, &transport).unwrap_err();
             assert!(matches!(err, CommandError::Llm(_)), "{err}");
             assert!(err.to_string().contains("queries suggest"), "{err}");
-            assert!(!out.exists());
+            assert!(!out.parent().unwrap().exists());
         }
 
         with_llm_url(|| {
-            // The one searchable page ("Storage Module"): two kept, a title quote and an empty
-            // query rejected.
+            // The one searchable page ("Storage Module"): two kept, a title quote, an empty
+            // query and a repeat rejected.
             let reply = completion(
                 &serde_json::to_string(&serde_json::json!([
                     {"query": "how do I cache uploads", "kind": "howto"},
                     {"query": "bucket label for caching", "kind": "reference"},
                     {"query": "what is the storage module", "kind": "concept"},
                     {"query": "", "kind": "howto"},
+                    {"query": "how do I cache uploads", "kind": "howto"},
                 ]))
                 .unwrap(),
             );
@@ -364,7 +394,15 @@ mod tests {
                 "suggest-model"
             );
             assert_eq!(outcome.pages, 1);
-            assert_eq!(outcome.rejected, 2);
+            assert_eq!(
+                (
+                    outcome.title_quotes,
+                    outcome.empty,
+                    outcome.repeats,
+                    outcome.failed
+                ),
+                (1, 1, 1, 0)
+            );
             assert_eq!(outcome.suggestions.len(), 2);
 
             let written = suggest::load(&out).unwrap();
@@ -449,6 +487,19 @@ mod tests {
             ..options.clone()
         };
         assert!(queries_accept(&paths, &all).is_err());
+        assert_eq!(eval::load_queries(&queries_path).unwrap().len(), 1);
+
+        // An id already in the query file is refused before anything is appended, so
+        // `queries check` never sees a duplicate.
+        let again = QueriesAcceptOptions {
+            accept: vec!["what-is-b-2".to_string(), "what-is-a-1".to_string()],
+            ..options.clone()
+        };
+        let err = queries_accept(&paths, &again).unwrap_err();
+        assert!(
+            matches!(&err, CommandError::Queries(queries::QueriesError::DuplicateId(id)) if id == "what-is-a-1"),
+            "{err}"
+        );
         assert_eq!(eval::load_queries(&queries_path).unwrap().len(), 1);
 
         // Held out on request; a repeated id is appended once.

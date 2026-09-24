@@ -54,6 +54,9 @@ pub enum QueriesError {
     /// `--accept` named an id that is not in the suggestions file.
     #[error("--accept {0:?} names no row in the suggestions file")]
     UnknownSuggestion(String),
+    /// An accepted suggestion's id is already in the query file.
+    #[error("query id {0:?} is already in the query file")]
+    DuplicateId(String),
     /// Talking to the model failed (`queries suggest`).
     #[error(transparent)]
     Llm(#[from] ChatError),
@@ -235,7 +238,7 @@ pub struct GradedQuery {
 /// A short, stable, human-scannable id for a query: a slug of its text plus a hash suffix so
 /// two different queries that slugify the same never collide, and so importing or suggesting
 /// the same query text always produces the same id.
-pub fn query_id(query: &str) -> String {
+pub(crate) fn query_id(query: &str) -> String {
     let mut slug = String::new();
     let mut last_dash = false;
     for ch in query.to_lowercase().chars() {

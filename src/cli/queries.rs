@@ -176,10 +176,14 @@ fn run_queries_suggest(paths: &Paths, args: QueriesSuggestArgs) -> Result<ExitCo
     let transport = UreqChatTransport::new();
     let outcome = commands::queries_suggest(paths, &options, &transport)?;
     eprintln!(
-        "{} pages sampled, {} suggestions ({} rejected)",
+        "{} pages sampled, {} suggestions ({} title quotes, {} empty, {} repeats rejected; \
+         {} pages failed)",
         outcome.pages,
         outcome.suggestions.len(),
-        outcome.rejected
+        outcome.title_quotes,
+        outcome.empty,
+        outcome.repeats,
+        outcome.failed
     );
     eprintln!("wrote {}", options.out.display());
     Ok(ExitCode::SUCCESS)

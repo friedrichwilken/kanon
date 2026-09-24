@@ -5,7 +5,7 @@
 //! ([`pinakes::index`]), the artifact reader, `manifest.json` and the shared model client.
 //! Everything about measuring lives here.
 //!
-//! Four modules depend on nothing else in the crate: [`config`] (`kanon.yaml`, or the `eval:`
+//! Five modules depend on nothing else in the crate: [`config`] (`kanon.yaml`, or the `eval:`
 //! block of `pinakes.yaml`), [`workspace`] ([`workspace::Paths`], the file locations every
 //! command uses), `env` (`KANON_*` variables with a `PINAKES_*` fallback), `num` (the one
 //! `usize -> f64` cast) and `rng` (the one seeded PRNG); [`llm`] (the model endpoint from the

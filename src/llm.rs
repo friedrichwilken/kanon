@@ -1,6 +1,6 @@
-//! The model endpoint `grade` and `queries suggest` talk to: [`pinakes::llm`]'s OpenAI-compatible chat client,
-//! configured from `KANON_LLM_URL`, `KANON_LLM_KEY` and `KANON_LLM_MODEL` (the `PINAKES_LLM_*`
-//! names are accepted as a fallback).
+//! The model endpoint `grade` and `queries suggest` talk to: [`pinakes::llm`]'s
+//! OpenAI-compatible chat client, configured from `KANON_LLM_URL`, `KANON_LLM_KEY` and
+//! `KANON_LLM_MODEL` (the `PINAKES_LLM_*` names are accepted as a fallback).
 
 use pinakes::llm::LlmConfig;
 use thiserror::Error;

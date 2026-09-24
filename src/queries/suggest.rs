@@ -4,11 +4,13 @@
 //! first segment of its path) with a seeded PRNG, so the same seed on the same artifact picks
 //! the same pages. [`suggest`] asks the model, one request per page, for two or three
 //! realistic questions the page answers, and turns them into [`Suggestion`] rows with the page
-//! as the expected id. A suggestion that quotes the page title verbatim (its tokenised title is
-//! a token-bounded substring of the tokenised query) is dropped, as it would inflate BM25
-//! recall without measuring anything; so are empty queries and repeats of a query already
-//! suggested for another page. The rows go to a suggestions file, never to `queries.jsonl`:
-//! `queries add --from suggestions.jsonl --accept ID…` is the human step in between.
+//! as the expected id. A suggestion that quotes the page title verbatim (see [`quotes_title`])
+//! is dropped, as it would inflate BM25 recall without measuring anything; so are empty
+//! queries and repeats of a query already suggested for another page, and a `kind` outside
+//! the prompt's vocabulary is emptied. A page whose reply is not the expected JSON is skipped
+//! and counted, not fatal, unless every page failed that way. The rows go to a suggestions
+//! file, never to `queries.jsonl`: `queries add --from suggestions.jsonl --accept ID…` is the
+//! human step in between.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -19,7 +21,7 @@ use super::{QueriesError, jsonl_error, query_id};
 use crate::rng::SplitMix64;
 use pinakes::index::Page;
 use pinakes::jsonl::{self, KeyOrder};
-use pinakes::llm::{self, ChatTransport, LlmConfig};
+use pinakes::llm::{self, ChatError, ChatTransport, LlmConfig};
 use pinakes::residue;
 use pinakes::tokenizer::title_key;
 
@@ -37,7 +39,8 @@ const EXCERPT_TOKENS: usize = 400;
 /// provenance `origin` and the sampled page's title for the human reading the file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Suggestion {
-    /// Stable id derived from the query text (see [`query_id`]).
+    /// Stable id derived from the query text: a slug plus a hash suffix, the same scheme
+    /// `queries import` uses, so the same text always gets the same id.
     pub id: String,
     /// The suggested query.
     pub query: String,
@@ -125,13 +128,35 @@ pub fn sample<'a>(
 }
 
 /// Whether `query` quotes `title` verbatim: the tokenised title (see [`title_key`]) appears
-/// whole, on token boundaries, in the tokenised query. An untitled page quotes nothing.
+/// whole, on token boundaries, in the tokenised query. A one-token title ("Install") is quoted
+/// only by a query that is nothing but that token, as [`title_key`] drops stopwords and
+/// "how do I install the service" is a fair question, not a quote. An untitled page quotes
+/// nothing.
 pub fn quotes_title(query: &str, title: &str) -> bool {
     let title = title_key(title);
     if title.is_empty() {
         return false;
     }
-    format!(" {} ", title_key(query)).contains(&format!(" {title} "))
+    let query = title_key(query);
+    if title.contains(' ') {
+        format!(" {query} ").contains(&format!(" {title} "))
+    } else {
+        query == title
+    }
+}
+
+/// The kinds the model may name; anything else becomes an empty kind rather than a row of its
+/// own in `eval`'s per-kind table.
+const KINDS: [&str; 4] = ["howto", "reference", "troubleshooting", "concept"];
+
+/// The model's `kind`, normalised to one of [`KINDS`] or empty.
+fn kind_of(reply: &str) -> String {
+    let kind = reply.trim().to_lowercase();
+    if KINDS.contains(&kind.as_str()) {
+        kind
+    } else {
+        String::new()
+    }
 }
 
 const SYSTEM_PROMPT: &str = "You are helping build a query set for evaluating a documentation \
@@ -167,12 +192,27 @@ struct ModelSuggestion {
 pub struct Suggested {
     /// The rows to write, in page order.
     pub rows: Vec<Suggestion>,
-    /// Model answers dropped: empty, quoting the page title, or a repeat of an earlier query.
-    pub rejected: usize,
+    /// Model answers dropped for quoting the page title.
+    pub title_quotes: usize,
+    /// Model answers dropped for being empty.
+    pub empty: usize,
+    /// Model answers dropped as a repeat of a query already suggested.
+    pub repeats: usize,
+    /// Pages whose reply was not the expected JSON (skipped; see [`suggest`]).
+    pub failed: usize,
+}
+
+impl Suggested {
+    /// Every model answer dropped, whatever the reason.
+    pub fn rejected(&self) -> usize {
+        self.title_quotes + self.empty + self.repeats
+    }
 }
 
 /// Ask the model for queries each of `pages` answers, one request per page, and keep the ones
-/// that pass the checks in the module docs.
+/// that pass the checks in the module docs. A reply that is not the expected JSON (a fenced
+/// block, prose) skips that page and counts in [`Suggested::failed`]; it is the error only
+/// when every page failed that way. Any other model error stops the run.
 pub fn suggest(
     transport: &dyn ChatTransport,
     config: &LlmConfig,
@@ -180,36 +220,47 @@ pub fn suggest(
 ) -> Result<Suggested, QueriesError> {
     let mut out = Suggested::default();
     let mut seen: BTreeSet<String> = BTreeSet::new();
+    let mut first_failure = None;
     for page in pages {
         let answers: Vec<ModelSuggestion> =
-            llm::chat(transport, config, SYSTEM_PROMPT, &user_prompt(page))?;
+            match llm::chat(transport, config, SYSTEM_PROMPT, &user_prompt(page)) {
+                Ok(answers) => answers,
+                Err(err @ ChatError::Json { .. }) => {
+                    out.failed += 1;
+                    first_failure.get_or_insert(err);
+                    continue;
+                }
+                Err(err) => return Err(err.into()),
+            };
         for answer in answers {
             let query = answer.query.trim();
-            if query.is_empty() || quotes_title(query, &page.title) {
-                out.rejected += 1;
+            if query.is_empty() {
+                out.empty += 1;
+                continue;
+            }
+            if quotes_title(query, &page.title) {
+                out.title_quotes += 1;
                 continue;
             }
             let id = query_id(query);
             if !seen.insert(id.clone()) {
-                out.rejected += 1;
+                out.repeats += 1;
                 continue;
             }
             out.rows.push(Suggestion {
                 id,
                 query: query.to_string(),
                 expected: vec![page.id.clone()],
-                kind: answer.kind.trim().to_lowercase(),
+                kind: kind_of(&answer.kind),
                 origin: ORIGIN.to_string(),
                 page_title: page.title.clone(),
             });
         }
     }
-    Ok(out)
-}
-
-/// Serialise rows as JSONL in declared key order, one object per line.
-pub fn to_jsonl(rows: &[Suggestion]) -> Result<String, serde_json::Error> {
-    jsonl::to_string(rows, KeyOrder::Declared)
+    match first_failure {
+        Some(err) if out.failed == pages.len() => Err(err.into()),
+        _ => Ok(out),
+    }
 }
 
 /// Replace the suggestions file at `path` with `rows`.
@@ -343,10 +394,26 @@ mod tests {
             "Command line"
         ));
         assert!(quotes_title("install", "Install"));
+        assert!(quotes_title("Install?", "Install"));
         assert!(!quotes_title("how do I set up the cli", "Command Line"));
         // A whole token only: "caches" does not quote "cache".
         assert!(!quotes_title("enable caches for uploads", "Cache"));
+        // A one-token title is quoted only by a query that is nothing but that token, since
+        // title_key drops stopwords and every question about installing contains "install".
+        assert!(!quotes_title("how do I install the service", "Install"));
+        assert!(!quotes_title(
+            "permissions for a read-only user",
+            "Permissions"
+        ));
         assert!(!quotes_title("anything", ""));
+    }
+
+    #[test]
+    fn kind_is_one_of_the_prompt_vocabulary_or_empty() {
+        assert_eq!(kind_of(" HowTo "), "howto");
+        assert_eq!(kind_of("troubleshooting"), "troubleshooting");
+        assert_eq!(kind_of("tutorial"), "");
+        assert_eq!(kind_of(""), "");
     }
 
     #[test]
@@ -357,22 +424,27 @@ mod tests {
         let first = completion(
             &serde_json::to_string(&serde_json::json!([
                 {"query": "how do I set the service up on a fresh machine", "kind": "HowTo "},
-                {"query": "Install the service", "kind": "howto"},
+                {"query": "Install", "kind": "howto"},
                 {"query": "  ", "kind": "howto"},
             ]))
             .unwrap(),
         );
         let second = completion(
             &serde_json::to_string(&serde_json::json!([
-                {"query": "which port does TLS use", "kind": "reference"},
+                {"query": "which port does TLS use", "kind": "faq"},
                 {"query": "how do I set the service up on a fresh machine", "kind": "howto"},
             ]))
             .unwrap(),
         );
         let transport = ScriptedTransport::new(vec![Scripted::Ok(first), Scripted::Ok(second)]);
         let out = suggest(&transport, &config(), &[install, keys]).unwrap();
-        assert_eq!(out.rejected, 3);
+        assert_eq!(
+            (out.title_quotes, out.empty, out.repeats, out.failed),
+            (1, 1, 1, 0)
+        );
+        assert_eq!(out.rejected(), 3);
         assert_eq!(out.rows.len(), 2);
+        assert_eq!(out.rows[1].kind, "", "off-vocabulary kind is emptied");
         assert_eq!(
             out.rows[0].query,
             "how do I set the service up on a fresh machine"
@@ -395,11 +467,46 @@ mod tests {
     }
 
     #[test]
-    fn suggest_fails_on_a_model_reply_that_is_not_the_expected_json() {
+    fn suggest_skips_a_page_whose_reply_is_not_json_and_fails_only_when_every_page_did() {
         let pages = corpus();
-        let transport = ScriptedTransport::new(vec![Scripted::Ok(completion("no"))]);
+        let good = |query: &str| {
+            completion(
+                &serde_json::to_string(&serde_json::json!([{"query": query, "kind": "howto"}]))
+                    .unwrap(),
+            )
+        };
+        let fenced = completion("```json\n[{\"query\": \"lost\", \"kind\": \"howto\"}]\n```");
+        let transport = ScriptedTransport::new(vec![
+            Scripted::Ok(good("set up a fresh machine")),
+            Scripted::Ok(fenced.clone()),
+            Scripted::Ok(good("change the listening port")),
+        ]);
+        let out = suggest(&transport, &config(), &[&pages[0], &pages[1], &pages[2]]).unwrap();
+        assert_eq!(out.failed, 1);
+        assert_eq!(out.rows.len(), 2, "the pages around the failure are kept");
+        assert_eq!(out.rows[1].expected, ["handbook::docs/reference/cli.md"]);
+
+        // Every page failing that way is the error.
+        let transport = ScriptedTransport::new(vec![Scripted::Ok(fenced)]);
         let err = suggest(&transport, &config(), &[&pages[0]]).unwrap_err();
-        assert!(matches!(err, QueriesError::Llm(_)), "{err}");
+        assert!(
+            matches!(err, QueriesError::Llm(ChatError::Json { .. })),
+            "{err}"
+        );
+
+        // Any other model error still stops the run.
+        let transport = ScriptedTransport::new(vec![
+            Scripted::Ok(good("set up a fresh machine")),
+            Scripted::Err(pinakes::llm::TransportError::Status(
+                401,
+                "unauthorized".to_string(),
+            )),
+        ]);
+        let err = suggest(&transport, &config(), &[&pages[0], &pages[1]]).unwrap_err();
+        assert!(
+            matches!(err, QueriesError::Llm(ChatError::Http { status: 401, .. })),
+            "{err}"
+        );
     }
 
     #[test]
@@ -412,13 +519,11 @@ mod tests {
             origin: ORIGIN.to_string(),
             page_title: "A".to_string(),
         }];
-        let text = to_jsonl(&rows).unwrap();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("suggestions.jsonl");
         write(&path, &rows).unwrap();
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
         assert_eq!(
-            text,
+            std::fs::read_to_string(&path).unwrap(),
             "{\"id\":\"q-1\",\"query\":\"q\",\"expected\":[\"h::a.md\"],\"kind\":\"howto\",\
              \"origin\":\"suggested\",\"page_title\":\"A\"}\n"
         );

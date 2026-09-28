@@ -46,6 +46,7 @@ fn dense_and_hybrid_metrics_on_the_golden_corpus_are_pinned() {
         model: "fake".to_string(),
         batch: 8,
         out: Some(embeddings_dir.path().join("embeddings.bin")),
+        ..EmbedOptions::default()
     };
     embed(&paths, &embed_options, embedder).expect("embed runs on the golden fixture");
 

@@ -47,6 +47,11 @@ update-golden:
     UPDATE_SNAPSHOTS=1 cargo test
     UPDATE_SCHEMAS=1 cargo test --test schemas
 
+# Run the Ollama tutorial end to end (needs Ollama serving nomic-embed-text and a small chat model; see docs/tutorials/local-models-with-ollama.md). Not part of `check`: CI has no model server.
+check-local-models:
+    cargo build --release --locked
+    KANON=target/release/kanon examples/local-models/check.sh
+
 # RustSec advisories against Cargo.lock (needs `cargo install cargo-audit`).
 audit:
     cargo audit

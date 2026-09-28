@@ -938,6 +938,7 @@ mod tests {
             model: "fake".to_string(),
             batch: 64,
             out: None,
+            ..EmbedOptions::default()
         };
         embed(&paths, &embed_options, fake_embedder().as_ref()).unwrap();
         let options = BackendEvalOptions {
@@ -958,6 +959,7 @@ mod tests {
             model: "fake".to_string(),
             batch: 64,
             out: Some(dir.path().join("v2/embeddings.bin")),
+            ..EmbedOptions::default()
         };
         fs::create_dir_all(dir.path().join("v2")).unwrap();
         embed(&paths, &embed_options, fake_embedder().as_ref()).unwrap();

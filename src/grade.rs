@@ -17,7 +17,7 @@ use thiserror::Error;
 
 use pinakes::index::Page;
 use pinakes::jsonl::{self, KeyOrder};
-use pinakes::llm::{self, ChatError, ChatTransport, LlmConfig};
+use pinakes::llm::{ChatError, ChatTransport, LlmConfig};
 use pinakes::residue;
 
 use crate::contracts::TrailEntry;
@@ -147,7 +147,7 @@ pub fn grade_query(
     }
     let known: BTreeSet<&str> = candidates.iter().map(|c| c.id.as_str()).collect();
     let user = user_prompt(query, candidates);
-    let grades: Vec<ModelGrade> = llm::chat(transport, config, SYSTEM_PROMPT, &user)?;
+    let grades: Vec<ModelGrade> = crate::llm::chat_json(transport, config, SYSTEM_PROMPT, &user)?;
     Ok(grades
         .into_iter()
         .filter(|g| known.contains(g.id.as_str()))
@@ -311,6 +311,37 @@ mod tests {
         assert_eq!(rows[0].id, "handbook::docs/caching.md");
         assert_eq!(rows[0].grade, 3);
         assert_eq!(rows[0].model, "grader-model");
+    }
+
+    #[test]
+    fn grade_query_reads_a_fenced_reply_and_retries_a_reply_with_no_json() {
+        let fenced = completion(
+            "Here are the grades:\n```json\n[{\"id\": \"handbook::docs/caching.md\", \"grade\": 2}]\n```",
+        );
+        let transport = ScriptedTransport::new(vec![Scripted::Ok(fenced)]);
+        let rows =
+            grade_query(&transport, &config(), "caching", &caching_candidates(), "t").unwrap();
+        assert_eq!(rows[0].grade, 2);
+        assert_eq!(transport.requests.lock().unwrap().len(), 1);
+
+        let transport = ScriptedTransport::new(vec![
+            Scripted::Ok(completion("The first page is relevant.")),
+            Scripted::Ok(completion(
+                "[{\"id\": \"handbook::docs/caching.md\", \"grade\": 3}]",
+            )),
+        ]);
+        let rows =
+            grade_query(&transport, &config(), "caching", &caching_candidates(), "t").unwrap();
+        assert_eq!(rows[0].grade, 3);
+        assert_eq!(transport.requests.lock().unwrap().len(), 2);
+
+        let transport = ScriptedTransport::new(vec![
+            Scripted::Ok(completion("no")),
+            Scripted::Ok(completion("still no")),
+        ]);
+        let err =
+            grade_query(&transport, &config(), "caching", &caching_candidates(), "t").unwrap_err();
+        assert!(err.to_string().contains("still no"), "{err}");
     }
 
     #[test]

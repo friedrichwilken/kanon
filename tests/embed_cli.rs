@@ -20,16 +20,22 @@ fn kanon(dir: &Path, args: &[&str], env: &[(&str, &str)]) -> std::process::Outpu
     command.output().expect("kanon runs")
 }
 
-/// Answer every `POST /embeddings` on `listener` with a two-dimensional vector per input text,
-/// until the connection closes. Tolerates `Expect: 100-continue`.
-fn serve_embeddings(listener: &TcpListener) {
+/// Answer one `POST /embeddings` on `listener` with a two-dimensional vector per input text and
+/// return the texts it was asked to embed. Tolerates `Expect: 100-continue`.
+fn serve_embeddings(listener: &TcpListener) -> Vec<String> {
     let (mut stream, _) = listener.accept().unwrap();
     let Some(request) = read_request(&mut stream) else {
-        return;
+        return Vec::new();
     };
     let body_start = request.find("\r\n\r\n").unwrap() + 4;
     let body: serde_json::Value = serde_json::from_str(&request[body_start..]).unwrap();
-    let count = body["input"].as_array().unwrap().len();
+    let inputs: Vec<String> = body["input"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|text| text.as_str().unwrap().to_string())
+        .collect();
+    let count = inputs.len();
     let data: Vec<_> = (0..count)
         .map(|i| {
             #[allow(clippy::cast_precision_loss)]
@@ -44,6 +50,7 @@ fn serve_embeddings(listener: &TcpListener) {
         response_body
     );
     stream.write_all(response.as_bytes()).unwrap();
+    inputs
 }
 
 fn read_request(stream: &mut TcpStream) -> Option<String> {
@@ -133,4 +140,73 @@ fn embed_writes_the_embeddings_file_pair() {
         .unwrap();
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains("KANON_EMBED_URL"));
+}
+
+/// Run `kanon embed` with `args` against a one-shot endpoint; the texts it received, the
+/// parsed `embeddings.json` and stderr.
+fn embed_with(args: &[&str], model: &str) -> (Vec<String>, serde_json::Value, String) {
+    let dir = workspace();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let handle = std::thread::spawn(move || serve_embeddings(&listener));
+    let mut all = vec!["embed", "--model", model];
+    all.extend_from_slice(args);
+    let out = kanon(
+        dir.path(),
+        &all,
+        &[("KANON_EMBED_URL", &format!("http://{addr}"))],
+    );
+    let received = handle.join().unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let manifest =
+        serde_json::from_str(&fs::read_to_string(dir.path().join("embeddings.json")).unwrap())
+            .unwrap();
+    (
+        received,
+        manifest,
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+#[test]
+fn embed_gives_a_known_model_its_prefixes_and_records_them() {
+    let (received, manifest, stderr) = embed_with(&[], "nomic-embed-text");
+    assert_eq!(received.len(), 1);
+    assert!(received[0].starts_with("search_document: "), "{received:?}");
+    assert_eq!(manifest["doc_prefix"], "search_document: ");
+    assert_eq!(manifest["query_prefix"], "search_query: ");
+    assert!(
+        stderr.contains("prefixes: documents \"search_document: \", queries \"search_query: \""),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn embed_flags_set_or_switch_off_the_prefixes() {
+    let (received, manifest, _) = embed_with(
+        &["--doc-prefix", "passage: ", "--query-prefix", "query: "],
+        "some-other-model",
+    );
+    assert!(received[0].starts_with("passage: "), "{received:?}");
+    assert_eq!(manifest["doc_prefix"], "passage: ");
+    assert_eq!(manifest["query_prefix"], "query: ");
+
+    // An empty value is a choice: a known model's prefixes are switched off.
+    let (received, manifest, stderr) = embed_with(
+        &["--doc-prefix", "", "--query-prefix", ""],
+        "nomic-embed-text",
+    );
+    assert!(!received[0].starts_with("search_document"), "{received:?}");
+    assert_eq!(manifest["doc_prefix"], "");
+    assert_eq!(manifest["query_prefix"], "");
+    assert!(stderr.contains("prefixes: none"), "{stderr}");
+
+    // A model that is not known gets none when nothing is given.
+    let (received, manifest, _) = embed_with(&[], "some-other-model");
+    assert!(received[0].starts_with("Storage"), "{received:?}");
+    assert_eq!(manifest["doc_prefix"], "");
 }

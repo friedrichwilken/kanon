@@ -52,6 +52,8 @@ pub(super) fn dense_config(
         dimension: crate::embed::testing::FAKE_DIMENSION,
         unit_ids: units.iter().map(|u| u.page_id.clone()).collect(),
         manifest_sha256: crate::embed::artifact_manifest_hash(dir).unwrap(),
+        doc_prefix: String::new(),
+        query_prefix: String::new(),
     };
     crate::embed::write_embeddings(&bin, &json, &manifest, &vectors).unwrap();
     let config = BackendConfig {

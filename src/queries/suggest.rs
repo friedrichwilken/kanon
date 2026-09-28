@@ -21,7 +21,7 @@ use super::{QueriesError, jsonl_error, query_id};
 use crate::rng::SplitMix64;
 use pinakes::index::Page;
 use pinakes::jsonl::{self, KeyOrder};
-use pinakes::llm::{self, ChatError, ChatTransport, LlmConfig};
+use pinakes::llm::{ChatError, ChatTransport, LlmConfig};
 use pinakes::residue;
 use pinakes::tokenizer::title_key;
 
@@ -223,7 +223,7 @@ pub fn suggest(
     let mut first_failure = None;
     for page in pages {
         let answers: Vec<ModelSuggestion> =
-            match llm::chat(transport, config, SYSTEM_PROMPT, &user_prompt(page)) {
+            match crate::llm::chat_json(transport, config, SYSTEM_PROMPT, &user_prompt(page)) {
                 Ok(answers) => answers,
                 Err(err @ ChatError::Json { .. }) => {
                     out.failed += 1;
@@ -475,19 +475,23 @@ mod tests {
                     .unwrap(),
             )
         };
-        let fenced = completion("```json\n[{\"query\": \"lost\", \"kind\": \"howto\"}]\n```");
+        // No JSON in it at all: asked for twice (the retry), then the page is given up on.
+        let prose = completion("Here are a few ideas for questions, but I will not format them.");
         let transport = ScriptedTransport::new(vec![
             Scripted::Ok(good("set up a fresh machine")),
-            Scripted::Ok(fenced.clone()),
+            Scripted::Ok(prose.clone()),
+            Scripted::Ok(prose.clone()),
             Scripted::Ok(good("change the listening port")),
         ]);
         let out = suggest(&transport, &config(), &[&pages[0], &pages[1], &pages[2]]).unwrap();
         assert_eq!(out.failed, 1);
         assert_eq!(out.rows.len(), 2, "the pages around the failure are kept");
         assert_eq!(out.rows[1].expected, ["handbook::docs/reference/cli.md"]);
+        assert_eq!(transport.requests.lock().unwrap().len(), 4);
 
         // Every page failing that way is the error.
-        let transport = ScriptedTransport::new(vec![Scripted::Ok(fenced)]);
+        let transport =
+            ScriptedTransport::new(vec![Scripted::Ok(prose.clone()), Scripted::Ok(prose)]);
         let err = suggest(&transport, &config(), &[&pages[0]]).unwrap_err();
         assert!(
             matches!(err, QueriesError::Llm(ChatError::Json { .. })),
@@ -507,6 +511,37 @@ mod tests {
             matches!(err, QueriesError::Llm(ChatError::Http { status: 401, .. })),
             "{err}"
         );
+    }
+
+    #[test]
+    fn suggest_reads_a_fenced_or_wrapped_reply_and_recovers_on_the_stricter_retry() {
+        let pages = corpus();
+        let transport = ScriptedTransport::new(vec![
+            // A local model's usual habits: a markdown fence, then a sentence around the value.
+            Scripted::Ok(completion(
+                "```json\n[{\"query\": \"set up a fresh machine\", \"kind\": \"howto\"}]\n```",
+            )),
+            Scripted::Ok(completion(
+                "Sure: [{\"query\": \"change the listening port\", \"kind\": \"howto\"}] Enjoy!",
+            )),
+            // No JSON the first time, JSON on the retry.
+            Scripted::Ok(completion("Let me think about that.")),
+            Scripted::Ok(completion(
+                "[{\"query\": \"reset a password\", \"kind\": \"howto\"}]",
+            )),
+        ]);
+        let out = suggest(&transport, &config(), &[&pages[0], &pages[1], &pages[2]]).unwrap();
+        assert_eq!(out.failed, 0);
+        let queries: Vec<&str> = out.rows.iter().map(|r| r.query.as_str()).collect();
+        assert_eq!(
+            queries,
+            [
+                "set up a fresh machine",
+                "change the listening port",
+                "reset a password"
+            ]
+        );
+        assert_eq!(transport.requests.lock().unwrap().len(), 4);
     }
 
     #[test]

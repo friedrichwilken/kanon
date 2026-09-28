@@ -279,6 +279,57 @@ pub struct EmbeddingsManifest {
     pub unit_ids: Vec<String>,
     /// `sha256` of the artifact's `manifest.json`, or `"none"` for a manifest-less artifact.
     pub manifest_sha256: String,
+    /// The text put in front of every unit before it was embedded (empty for a model that
+    /// wants none, and in a file written before prefixes were recorded).
+    #[serde(default)]
+    pub doc_prefix: String,
+    /// The text `dense` and `hybrid` put in front of every query before embedding it: the
+    /// convention the file was built with, so the query side cannot drift from the document
+    /// side. A consumer that embeds queries in-process must use the same one.
+    #[serde(default)]
+    pub query_prefix: String,
+}
+
+/// The text an embedding model wants in front of what it embeds, one per side.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Prefixes {
+    /// In front of every document unit.
+    pub doc: String,
+    /// In front of every query.
+    pub query: String,
+}
+
+/// The prefixes the model card of a widely used open embedding model asks for, keyed by the
+/// start of its lower-cased name (an `org/` path and a `:tag` are ignored). A model not listed
+/// here gets none; the list is short on purpose, and `--doc-prefix`/`--query-prefix` (or
+/// `doc_prefix`/`query_prefix` in the config) set them for any other, or for these.
+const KNOWN_PREFIXES: &[(&str, &str, &str)] = &[
+    ("nomic-embed-text", "search_document: ", "search_query: "),
+    ("e5-small", "passage: ", "query: "),
+    ("e5-base", "passage: ", "query: "),
+    ("e5-large", "passage: ", "query: "),
+    ("multilingual-e5-", "passage: ", "query: "),
+    ("bge-small-en", "", BGE_QUERY),
+    ("bge-base-en", "", BGE_QUERY),
+    ("bge-large-en", "", BGE_QUERY),
+    ("mxbai-embed-large", "", BGE_QUERY),
+];
+
+/// The retrieval instruction BGE (English) and mxbai models put in front of a query.
+const BGE_QUERY: &str = "Represent this sentence for searching relevant passages: ";
+
+/// The [`Prefixes`] a known model wants, `None` for any other model. `bge-m3`, hosted
+/// embedding APIs and the like want none and are deliberately not listed.
+pub fn known_prefixes(model: &str) -> Option<Prefixes> {
+    let name = model.rsplit('/').next().unwrap_or(model);
+    let name = name.split(':').next().unwrap_or(name).to_lowercase();
+    KNOWN_PREFIXES
+        .iter()
+        .find(|(start, ..)| name.starts_with(start))
+        .map(|(_, doc, query)| Prefixes {
+            doc: (*doc).to_string(),
+            query: (*query).to_string(),
+        })
 }
 
 /// Sentinel `manifest_sha256` for an artifact with no `manifest.json`.
@@ -406,12 +457,76 @@ pub mod testing {
             Ok(inputs.iter().map(|text| embed_one(text)).collect())
         }
     }
+
+    /// [`FakeEmbedder`] that remembers every text it was asked to embed, in order, so a test
+    /// can see exactly what reached the endpoint (prefixes included).
+    #[derive(Debug, Default)]
+    pub struct RecordingEmbedder {
+        /// Every input so far.
+        pub inputs: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl Embedder for RecordingEmbedder {
+        fn embed(&self, model: &str, inputs: &[String]) -> Result<Vec<Vec<f32>>, EmbedError> {
+            if let Ok(mut seen) = self.inputs.lock() {
+                seen.extend(inputs.iter().cloned());
+            }
+            FakeEmbedder.embed(model, inputs)
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::testing::FakeEmbedder;
     use super::*;
+
+    #[test]
+    fn known_models_get_their_prefixes_and_every_other_model_none() {
+        let nomic = Prefixes {
+            doc: "search_document: ".to_string(),
+            query: "search_query: ".to_string(),
+        };
+        let e5 = Prefixes {
+            doc: "passage: ".to_string(),
+            query: "query: ".to_string(),
+        };
+        let bge = Prefixes {
+            doc: String::new(),
+            query: "Represent this sentence for searching relevant passages: ".to_string(),
+        };
+        for (model, expected) in [
+            ("nomic-embed-text", &nomic),
+            ("nomic-embed-text:latest", &nomic),
+            ("nomic-ai/nomic-embed-text-v1.5", &nomic),
+            ("intfloat/e5-base-v2", &e5),
+            ("multilingual-e5-large", &e5),
+            ("BAAI/bge-base-en-v1.5", &bge),
+            ("bge-large-en", &bge),
+            ("mxbai-embed-large:335m", &bge),
+        ] {
+            assert_eq!(known_prefixes(model).as_ref(), Some(expected), "{model}");
+        }
+        for model in [
+            "text-embedding-3-small",
+            "bge-m3",
+            "e5-mistral-7b-instruct",
+            "all-minilm",
+            "fake",
+            "",
+        ] {
+            assert_eq!(known_prefixes(model), None, "{model}");
+        }
+    }
+
+    #[test]
+    fn an_embeddings_file_written_before_prefixes_reads_as_none() {
+        let old =
+            r#"{"model": "m", "dimension": 2, "unit_ids": ["a::x.md"], "manifest_sha256": "none"}"#;
+        let manifest: EmbeddingsManifest = serde_json::from_str(old).unwrap();
+        assert_eq!(manifest.doc_prefix, "");
+        assert_eq!(manifest.query_prefix, "");
+    }
 
     #[test]
     fn embeddings_file_round_trips() {
@@ -423,6 +538,8 @@ mod tests {
             dimension: 3,
             unit_ids: vec!["a::x.md".to_string(), "a::y.md".to_string()],
             manifest_sha256: "deadbeef".to_string(),
+            doc_prefix: "search_document: ".to_string(),
+            query_prefix: "search_query: ".to_string(),
         };
         let vectors = vec![vec![1.0, 2.0, 3.0], vec![-1.5, 0.0, 4.25]];
         write_embeddings(&bin, &json, &manifest, &vectors).unwrap();
@@ -442,6 +559,8 @@ mod tests {
             dimension: 4,
             unit_ids: vec!["a::x.md".to_string()],
             manifest_sha256: NO_MANIFEST.to_string(),
+            doc_prefix: String::new(),
+            query_prefix: String::new(),
         };
         write_embeddings(&bin, &json, &manifest, &[vec![1.0, 2.0, 3.0]]).unwrap();
         assert!(matches!(

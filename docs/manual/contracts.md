@@ -41,24 +41,30 @@ Response ([schema](../schemas/backend-response.schema.json);
 ]}
 ```
 
-Hits come best first; `kanon` keeps the first `k` and ranks by their order. The first hit's
-`score` is recorded as the result's `top_score` and decides a negative query against
-`--negative-threshold`, so it should be comparable across the backend's own answers. `heading`
-may be omitted (it defaults to empty).
+Hits come best first and `kanon` ranks by their order, keeping the first `k` distinct pages: a
+page counts once, at its best rank, and a repeat of it is dropped before the `k` are taken. That
+holds for every hit, with or without a `unit_id`, and it is what the built-in backends do, so a
+backend that retrieves several units of one page is measured on pages like every other. (A
+backend that used to return the same page twice used to fill two of the `k` places with it; a
+run file recorded before this change can therefore differ from one recorded after it.) The
+first hit's `score` is recorded as the result's `top_score` and decides a negative query
+against `--negative-threshold`, so it should be comparable across the backend's own answers.
+`heading` may be omitted (it defaults to empty).
 
 `unit_id` is optional and names the [unit](#unit) that matched, in the id `pinakes chunks`
 gives it: `<page_id>#<ordinal>`. `kanon` scores pages, so the hit's `page_id` is what counts and
 the unit is recorded beside it, as `top_units` in the run file (same length as `top`, `null` for
-a hit without one; the key is absent when no hit named a unit). Three rules keep the two
-honest:
+a hit without one; the key is absent when no hit named a unit). A hit without a `unit_id` is
+scored on `page_id` alone, as before.
 
-- A `unit_id` must be `<source>::<path>#<ordinal>` for the page the hit names: the page is
-  everything before the last `#` (a path may contain one), the ordinal a plain number. Any other
-  `unit_id` fails the whole `eval` with the id in the message.
-- A page counts once. When a backend returns several units of one page, the best-ranked hit
-  stands for the page and the rest are dropped before the first `k` are kept, so a unit
-  retriever is measured on pages like every other backend.
-- A hit without a `unit_id` is scored on `page_id` alone, as before.
+`kanon` reads `unit_id` more strictly than it used to, within version 1: it was parsed and
+ignored, and now a `unit_id` must be `<source>::<path>#<ordinal>` for the page the hit names,
+the page being everything before the last `#` (a path may contain one) and the ordinal a plain
+number. A hit that is kept and says otherwise, an opaque id or the id of another page, fails
+the whole `eval` with the id in the message; a backend with ids of its own should leave
+`unit_id` out. Only that shape is checked: `kanon` does not look up whether the page or the
+unit exists in the artifact. A hit that is not kept (past the first `k` pages, or a repeat of a
+page already kept) is not checked either.
 
 ## Trail
 

@@ -106,14 +106,22 @@ impl Backend for ExternalBackend {
 /// The first `k` distinct pages of a response's hits, best first.
 ///
 /// A backend that retrieves units may return several units of one page; `eval` scores pages,
-/// so the best-ranked hit of a page stands for it, as the built-in backends do. A hit's
+/// so the best-ranked hit of a page stands for it, as the built-in backends do. A kept hit's
 /// `unit_id` must be `<page_id>#<ordinal>` (see [`split_unit_id`]) for the page it names as
 /// `page_id`; a hit that says otherwise is the backend's bug and fails the response with the
-/// offending id, rather than being scored against a page it did not retrieve.
+/// offending id, rather than being scored against a page it did not retrieve. Only the shape
+/// is checked, not that the unit or the page exists in the artifact. A hit past the first `k`
+/// pages, or a repeat of a page already kept, is never scored or recorded, so it is not checked.
 fn page_hits(hits: Vec<SearchHit>, k: usize) -> Result<Vec<Hit>, String> {
     let mut seen = HashSet::new();
     let mut out = Vec::new();
     for hit in hits {
+        if out.len() == k {
+            break;
+        }
+        if !seen.insert(hit.page_id.clone()) {
+            continue;
+        }
         if let Some(unit_id) = &hit.unit_id {
             match split_unit_id(unit_id) {
                 Some((page_id, _)) if page_id == hit.page_id => {}
@@ -130,14 +138,12 @@ fn page_hits(hits: Vec<SearchHit>, k: usize) -> Result<Vec<Hit>, String> {
                 }
             }
         }
-        if out.len() < k && seen.insert(hit.page_id.clone()) {
-            out.push(Hit {
-                page_id: hit.page_id,
-                score: hit.score,
-                heading: hit.heading,
-                unit_id: hit.unit_id,
-            });
-        }
+        out.push(Hit {
+            page_id: hit.page_id,
+            score: hit.score,
+            heading: hit.heading,
+            unit_id: hit.unit_id,
+        });
     }
     Ok(out)
 }
@@ -208,16 +214,62 @@ mod tests {
                 page_hits(vec![search_hit("handbook::docs/a.md", Some(bad))], 10).unwrap_err();
             assert!(err.contains(&format!("{bad:?}")), "{err}");
         }
-        // Past the first `k` distinct pages a bad hit still fails: the response is checked whole.
-        let err = page_hits(
+    }
+
+    #[test]
+    fn a_hit_that_is_never_kept_is_not_checked() {
+        // Past the first `k` pages, and a repeat of a kept page: neither is scored or recorded,
+        // so a malformed unit_id on them changes nothing.
+        let hits = page_hits(
             vec![
                 search_hit("handbook::docs/a.md", None),
-                search_hit("handbook::docs/b.md", Some("nope")),
+                search_hit("handbook::docs/a.md", Some("opaque-1")),
+                search_hit("handbook::docs/b.md", Some("opaque-2")),
             ],
             1,
         )
+        .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].unit_id, None);
+        // Kept, the same id fails.
+        let err = page_hits(
+            vec![
+                search_hit("handbook::docs/a.md", None),
+                search_hit("handbook::docs/b.md", Some("opaque-2")),
+            ],
+            2,
+        )
         .unwrap_err();
-        assert!(err.contains("\"nope\""), "{err}");
+        assert!(err.contains("\"opaque-2\""), "{err}");
+    }
+
+    #[test]
+    fn a_page_returned_twice_without_units_counts_once_too() {
+        let hits = page_hits(
+            vec![
+                search_hit("handbook::docs/a.md", None),
+                search_hit("handbook::docs/a.md", None),
+                search_hit("handbook::docs/b.md", None),
+            ],
+            2,
+        )
+        .unwrap();
+        let pages: Vec<&str> = hits.iter().map(|h| h.page_id.as_str()).collect();
+        assert_eq!(pages, ["handbook::docs/a.md", "handbook::docs/b.md"]);
+    }
+
+    #[test]
+    fn a_page_path_with_a_hash_keeps_its_page_and_its_unit() {
+        let hits = page_hits(
+            vec![search_hit(
+                "handbook::docs/c#.md",
+                Some("handbook::docs/c#.md#3"),
+            )],
+            5,
+        )
+        .unwrap();
+        assert_eq!(hits[0].page_id, "handbook::docs/c#.md");
+        assert_eq!(hits[0].unit_id.as_deref(), Some("handbook::docs/c#.md#3"));
     }
 
     #[test]

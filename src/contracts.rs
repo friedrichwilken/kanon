@@ -455,6 +455,8 @@ mod tests {
             "handbook::docs/a.md#-1",
             "handbook::docs/a.md#+1",
             "handbook::docs/a.md#01",
+            // An ordinal past usize is not a unit.
+            "handbook::docs/a.md#99999999999999999999",
             "docs/a.md#0",
             "#0",
             "",

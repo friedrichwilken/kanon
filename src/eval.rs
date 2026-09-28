@@ -918,6 +918,15 @@ mod tests {
         assert!(!serde_json::to_string(&plain).unwrap().contains("top_units"));
     }
 
+    #[test]
+    fn a_result_row_written_before_top_units_still_reads() {
+        let old = r#"{"id": "q", "kind": "howto", "holdout": false, "hit5": true, "hit10": true,
+            "rr": 1.0, "ndcg5": 1.0, "ndcg10": 1.0, "rels": [1], "top": ["s::a.md"]}"#;
+        let row: QueryResult = serde_json::from_str(old).unwrap();
+        assert_eq!(row.top, ["s::a.md"]);
+        assert!(row.top_units.is_empty());
+    }
+
     fn graded_query(expected: &[&str], graded: &[(&str, u8)]) -> Query {
         Query {
             id: "q".into(),

@@ -20,6 +20,16 @@ pub(crate) struct EmbedArgs {
     /// `embeddings.json` is written next to it.
     #[arg(long, value_name = "FILE")]
     out: Option<PathBuf>,
+    /// Text put in front of every unit before it is embedded, recorded in `embeddings.json`
+    /// (default: `doc_prefix` from the config, else the model's known one, else none; pass an
+    /// empty string for none).
+    #[arg(long, value_name = "TEXT")]
+    doc_prefix: Option<String>,
+    /// Text `dense` and `hybrid` put in front of every query, recorded in `embeddings.json` so
+    /// queries are embedded as the file was built (default: `query_prefix` from the config, else
+    /// the model's known one, else none). Give a nomic model `--query-prefix "search_query: "`.
+    #[arg(long, value_name = "TEXT")]
+    query_prefix: Option<String>,
     /// Texts per embeddings request.
     #[arg(long, default_value_t = kanon::embed::DEFAULT_BATCH)]
     batch: usize,
@@ -34,6 +44,8 @@ pub(crate) fn run_embed(mut paths: Paths, args: EmbedArgs) -> Result<ExitCode> {
         model,
         batch: args.batch,
         out: args.out,
+        doc_prefix: args.doc_prefix,
+        query_prefix: args.query_prefix,
     };
     let outcome = commands::embed(&paths, &options, &embedder)?;
     eprintln!(
@@ -44,5 +56,13 @@ pub(crate) fn run_embed(mut paths: Paths, args: EmbedArgs) -> Result<ExitCode> {
         outcome.bin_path.display(),
         outcome.json_path.display()
     );
+    if outcome.doc_prefix.is_empty() && outcome.query_prefix.is_empty() {
+        eprintln!("prefixes: none");
+    } else {
+        eprintln!(
+            "prefixes: documents {:?}, queries {:?}",
+            outcome.doc_prefix, outcome.query_prefix
+        );
+    }
     Ok(ExitCode::SUCCESS)
 }

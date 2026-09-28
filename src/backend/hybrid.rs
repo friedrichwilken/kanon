@@ -137,4 +137,30 @@ mod tests {
             "k truncates the result"
         );
     }
+
+    #[test]
+    fn hybrid_embeds_the_query_with_the_prefix_the_file_was_built_with() {
+        use crate::embed::testing::RecordingEmbedder;
+
+        let (dir, _pages) = fixture_pages();
+        let (_embeddings_dir, mut config) = dense_config(dir.path(), Rc::new(FakeEmbedder));
+        let json = std::fs::read_to_string(&config.embeddings_json).unwrap();
+        std::fs::write(
+            &config.embeddings_json,
+            json.replace(
+                "\"query_prefix\": \"\"",
+                "\"query_prefix\": \"search_query: \"",
+            ),
+        )
+        .unwrap();
+        let recorder = Rc::new(RecordingEmbedder::default());
+        config.embedder = Some(recorder.clone());
+        let backend = HybridBackend::build(dir.path(), &config).unwrap();
+        backend.search("upload caching bucket", 10, None).unwrap();
+        assert_eq!(
+            *recorder.inputs.lock().unwrap(),
+            ["search_query: upload caching bucket"],
+            "the dense half embeds once, with the recorded prefix; the bm25 half sees the bare query"
+        );
+    }
 }

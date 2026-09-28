@@ -73,7 +73,9 @@ against one warns and compares against 0 until the baseline is re-recorded), and
 the same query set. `grade --backend NAME` takes the same backend flags and config defaults,
 so a trail from a served retriever is graded on the candidates that retriever returns. Model
 endpoints come from `KANON_EMBED_URL` and `KANON_LLM_URL` (the `PINAKES_*` names still
-work).
+work). Ollama and any other local server that speaks the OpenAI
+format work too, with embedding prefixes handled for the common open models:
+[Local models with Ollama](docs/tutorials/local-models-with-ollama.md).
 
 `expected` is the binary judgement recall and MRR read. A row may add `graded`, the same kind
 of keys with a relevance of 0 to 3, and nDCG@5 and nDCG@10 read that:

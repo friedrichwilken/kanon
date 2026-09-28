@@ -17,6 +17,8 @@ pub struct DenseBackend {
     page_by_id: HashMap<String, usize>,
     searchable_count: usize,
     model: String,
+    /// In front of every query before it is embedded: the convention `embeddings.json` records.
+    query_prefix: String,
     embedder: Rc<dyn Embedder>,
     unit_ids: Vec<String>,
     unit_headings: Vec<String>,
@@ -61,6 +63,7 @@ impl Backend for DenseBackend {
             page_by_id,
             searchable_count,
             model: manifest.model,
+            query_prefix: manifest.query_prefix,
             embedder,
             unit_ids: manifest.unit_ids,
             unit_headings,
@@ -74,6 +77,7 @@ impl Backend for DenseBackend {
         k: usize,
         module: Option<&str>,
     ) -> Result<Vec<Hit>, BackendError> {
+        let query = format!("{}{query}", self.query_prefix);
         dense_search(
             &self.pages,
             &self.page_by_id,
@@ -82,7 +86,7 @@ impl Backend for DenseBackend {
             &self.vectors,
             self.embedder.as_ref(),
             &self.model,
-            query,
+            &query,
             k,
             module,
         )
@@ -229,5 +233,33 @@ mod tests {
         };
         // No embeddings file at all is an I/O error before the embedder is even checked.
         assert!(DenseBackend::build(dir.path(), &config).is_err());
+    }
+
+    #[test]
+    fn dense_embeds_the_query_with_the_prefix_the_file_was_built_with() {
+        use crate::embed::testing::{FakeEmbedder, RecordingEmbedder};
+
+        let (dir, _pages) = fixture_pages();
+        let (embeddings_dir, mut config) = dense_config(dir.path(), Rc::new(FakeEmbedder));
+        // A file built for a model that wants a query prefix records it.
+        let json = std::fs::read_to_string(&config.embeddings_json).unwrap();
+        assert!(json.contains("\"query_prefix\": \"\""), "{json}");
+        std::fs::write(
+            &config.embeddings_json,
+            json.replace(
+                "\"query_prefix\": \"\"",
+                "\"query_prefix\": \"search_query: \"",
+            ),
+        )
+        .unwrap();
+        let recorder = Rc::new(RecordingEmbedder::default());
+        config.embedder = Some(recorder.clone());
+        let backend = DenseBackend::build(dir.path(), &config).unwrap();
+        backend.search("upload caching bucket", 10, None).unwrap();
+        assert_eq!(
+            *recorder.inputs.lock().unwrap(),
+            ["search_query: upload caching bucket"]
+        );
+        drop(embeddings_dir);
     }
 }

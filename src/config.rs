@@ -274,6 +274,17 @@ pub struct Config {
     /// (default: `embeddings.bin` next to it); `--embeddings` overrides it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub embeddings: Option<PathBuf>,
+    /// The text `embed` puts in front of every unit before embedding it, for a model that wants
+    /// one (`search_document: ` for nomic); `--doc-prefix` overrides it, and a model `embed`
+    /// knows gets its own when neither is set. Recorded in `embeddings.json`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub doc_prefix: Option<String>,
+    /// The text `embed` records as the query prefix in `embeddings.json`, which `dense` and
+    /// `hybrid` then put in front of every query (`search_query: ` for nomic);
+    /// `--query-prefix` overrides it. There is no `eval` flag: the file decides, so the query
+    /// side cannot differ from the document side.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query_prefix: Option<String>,
     /// Backends a bare `eval` compares over the same query set, one table each; when set it
     /// wins over `backend`. `--compare` or `--backend` on the command line overrides it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

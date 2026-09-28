@@ -71,6 +71,12 @@ pub(crate) fn run_grade(paths: &Paths, args: GradeArgs) -> Result<ExitCode> {
         outcome.rows.len(),
         outcome.backend
     );
+    if outcome.failed > 0 {
+        eprintln!(
+            "{} queries skipped: the model's reply had no readable JSON, even on a second try",
+            outcome.failed
+        );
+    }
     if let Some(path) = &args.out {
         eprintln!("wrote {}", path.display());
     } else {

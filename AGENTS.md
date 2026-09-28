@@ -24,7 +24,9 @@ belongs in git: a query set, a run, a gate, a report.
 **Depend on nothing else in the crate:** `config` (`kanon.yaml`, or the `eval:` block of
 `pinakes.yaml`, and source priorities read from `pinakes.yaml`), `workspace` (`Paths`), `env`
 (`KANON_*` with a `PINAKES_*` fallback), `num` and `rng`. `llm` (the model endpoint from
-`KANON_LLM_*`) sits on `env`.
+`KANON_LLM_*`) sits on `env`. Ask a model for JSON through `llm::chat_json`, never
+`pinakes::llm::chat` directly: it reads fenced or prose-wrapped replies and retries once,
+which small local models need.
 
 **Contracts:** `contracts` (the versioned serde types of the backend contract, the trail and
 the unit, the readers that check a document's version, and the source of the JSON Schemas

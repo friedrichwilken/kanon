@@ -194,6 +194,17 @@ pub enum ConfigError {
         /// The version found.
         version: u32,
     },
+    /// A cost limit (`max_p95_ms`, `max_tokens`) is not a finite number, zero or more: such a
+    /// ceiling would fail every run, or none.
+    #[error("{path}: {key} must be a finite number, zero or more, not {value}")]
+    Limit {
+        /// The config path.
+        path: PathBuf,
+        /// The key.
+        key: &'static str,
+        /// The value found.
+        value: f64,
+    },
     /// An entry under `backends:` is not usable: a bad name, a name that shadows a built-in
     /// kind, an unknown type, or keys that do not fit the type.
     #[error("{path}: backend {name:?}: {message}")]
@@ -285,6 +296,15 @@ pub struct Config {
     /// side cannot differ from the document side.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub query_prefix: Option<String>,
+    /// `eval` exits 2 when a backend's 95th percentile search latency, in milliseconds, exceeds
+    /// this; `--max-p95-ms` overrides it. An absolute ceiling, so set it with room to spare:
+    /// latency varies from run to run and machine to machine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_p95_ms: Option<f64>,
+    /// `eval` exits 2 when the mean tokens per query of a backend's top 5 hits exceeds this;
+    /// `--max-tokens` overrides it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<f64>,
     /// Backends a bare `eval` compares over the same query set, one table each; when set it
     /// wins over `backend`. `--compare` or `--backend` on the command line overrides it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -379,6 +399,18 @@ pub fn parse_document(path: &Path, text: &str) -> Result<Document, ConfigError> 
             });
         }
         validate_backends(path, &config.backends)?;
+        for (key, value) in [
+            ("max_p95_ms", config.max_p95_ms),
+            ("max_tokens", config.max_tokens),
+        ] {
+            if let Some(value) = value.filter(|v| !v.is_finite() || *v < 0.0) {
+                return Err(ConfigError::Limit {
+                    path: path.to_path_buf(),
+                    key,
+                    value,
+                });
+            }
+        }
     }
     Ok(Document { config, priorities })
 }

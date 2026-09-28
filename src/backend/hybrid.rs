@@ -14,7 +14,7 @@ pub const RRF_DEPTH: usize = 50;
 
 /// Reciprocal rank fusion: `score(page) = Σ 1 / (k + rank)` over every ranking it appears in
 /// (1-based rank), rankings sorted by score descending, ties broken by the order pages were
-/// first seen in. `heading` is taken from the first ranking that carried the page.
+/// first seen in. `heading` is the first non-empty one a ranking carried for the page.
 pub fn reciprocal_rank_fusion(rankings: &[&[Hit]], k: usize) -> Vec<Hit> {
     let mut scores: HashMap<String, f64> = HashMap::new();
     let mut headings: HashMap<String, String> = HashMap::new();

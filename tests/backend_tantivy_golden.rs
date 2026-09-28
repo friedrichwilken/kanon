@@ -28,7 +28,7 @@ fn tantivy_backend_metrics_on_the_golden_corpus_are_pinned() {
         "pages": outcome.page_count,
         "searchable": outcome.searchable_count,
         "k": outcome.k,
-        "eval": serde_json::to_value(&outcome.summary).unwrap(),
+        "eval": serde_json::to_value(outcome.summary.clone().without_latency()).unwrap(),
     });
     let mut text = serde_json::to_string_pretty(&actual).unwrap();
     text.push('\n');

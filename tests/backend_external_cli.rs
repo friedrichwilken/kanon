@@ -182,3 +182,45 @@ fn a_unit_id_of_another_page_fails_the_eval_naming_the_id() {
     assert!(stderr.contains("handbook::docs/other.md#0"), "{stderr}");
     assert!(stderr.contains("belongs to page"), "{stderr}");
 }
+
+#[test]
+fn a_hit_the_corpus_does_not_have_is_reported_as_not_counted_in_the_cost() {
+    let dir = workspace();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let handle = std::thread::spawn(move || {
+        serve_one_search(
+            &listener,
+            SearchHit {
+                page_id: "handbook::docs/not-in-the-corpus.md".to_string(),
+                score: 1.0,
+                heading: "Storage".to_string(),
+                unit_id: None,
+            },
+        );
+    });
+    let out = kanon(
+        dir.path(),
+        &[
+            "eval",
+            "--queries",
+            "queries.jsonl",
+            "--backend",
+            "external",
+            "--backend-url",
+            &format!("http://{addr}"),
+        ],
+    );
+    handle.join().unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let tokens =
+        &serde_json::from_slice::<serde_json::Value>(&out.stdout).unwrap()["cost"]["tokens"];
+    assert_eq!(tokens["unresolved"], 1);
+    assert_eq!(tokens["mean@5"], 0.0, "nothing could be counted");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("(1 hits not counted)"), "{stderr}");
+}

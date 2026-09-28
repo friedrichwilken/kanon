@@ -1,6 +1,13 @@
 {
   "plain": {
     "eval": {
+      "cost": {
+        "tokens": {
+          "mean@10": 68.4,
+          "mean@5": 56.733333333333334,
+          "unresolved": 0
+        }
+      },
       "holdout": {
         "overall": {
           "mrr": 1.0,
@@ -406,6 +413,13 @@
     "page": "cookbook::docs/recipes/draft-plugin.md",
     "result": {
       "eval": {
+        "cost": {
+          "tokens": {
+            "mean@10": 69.8,
+            "mean@5": 57.46666666666667,
+            "unresolved": 0
+          }
+        },
         "holdout": {
           "overall": {
             "mrr": 1.0,

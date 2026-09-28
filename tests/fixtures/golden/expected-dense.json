@@ -1,6 +1,13 @@
 {
   "eval": {
     "backend": "dense",
+    "cost": {
+      "tokens": {
+        "mean@10": 213.66666666666666,
+        "mean@5": 104.53333333333333,
+        "unresolved": 0
+      }
+    },
     "holdout": {
       "overall": {
         "mrr": 0.25,

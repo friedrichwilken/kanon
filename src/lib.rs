@@ -12,7 +12,8 @@
 //! environment) sits on `env`. [`contracts`] sits on pinakes alone: the serde types of the
 //! backend contract, the trail and the unit, with their versions, that every reader and writer
 //! of those documents goes through. So do [`hit`], the page a retriever returned, and
-//! [`artifact`], the artifact's manifest read through pinakes's loader.
+//! [`artifact`], the artifact's manifest read through pinakes's loader; [`cost`], what a search
+//! costs in time and in tokens, sits on those and `num`.
 //!
 //! [`eval`] is the judge (`queries.jsonl`), the metrics and the result file; [`embed`] writes
 //! and reads the embeddings file pair; [`backend`] is the [`backend::Backend`] trait and its
@@ -31,6 +32,7 @@ pub mod backend;
 pub mod commands;
 pub mod config;
 pub mod contracts;
+pub mod cost;
 pub mod embed;
 mod env;
 pub mod error;

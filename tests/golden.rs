@@ -31,7 +31,7 @@ fn outcome_json(outcome: &EvalOutcome) -> Value {
         "pages": outcome.page_count,
         "searchable": outcome.searchable_count,
         "k": outcome.k,
-        "eval": serde_json::to_value(&outcome.summary).unwrap(),
+        "eval": serde_json::to_value(outcome.summary.clone().without_latency()).unwrap(),
     })
 }
 
@@ -71,7 +71,7 @@ fn golden_corpus_metrics_are_pinned() {
 
     // The committed baseline for the CI self-test gate is the plain result on its own.
     let baseline_path = fixture().join("expected-baseline.json");
-    let baseline = plain.summary.to_json().unwrap();
+    let baseline = plain.summary.clone().without_latency().to_json().unwrap();
     if std::env::var_os("UPDATE_GOLDEN").is_some() {
         std::fs::write(&baseline_path, &baseline).unwrap();
     }

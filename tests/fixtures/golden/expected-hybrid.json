@@ -1,6 +1,13 @@
 {
   "eval": {
     "backend": "hybrid",
+    "cost": {
+      "tokens": {
+        "mean@10": 211.8,
+        "mean@5": 110.66666666666667,
+        "unresolved": 0
+      }
+    },
     "holdout": {
       "overall": {
         "mrr": 0.625,

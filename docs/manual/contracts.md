@@ -44,9 +44,21 @@ Response ([schema](../schemas/backend-response.schema.json);
 Hits come best first; `kanon` keeps the first `k` and ranks by their order. The first hit's
 `score` is recorded as the result's `top_score` and decides a negative query against
 `--negative-threshold`, so it should be comparable across the backend's own answers. `heading`
-may be omitted (it defaults to empty). `unit_id` is optional and names the [unit](#unit) that matched,
-so a backend that retrieves sections is graded on the same cuts `kanon` makes; today `kanon`
-reads it and scores the page.
+may be omitted (it defaults to empty).
+
+`unit_id` is optional and names the [unit](#unit) that matched, in the id `pinakes chunks`
+gives it: `<page_id>#<ordinal>`. `kanon` scores pages, so the hit's `page_id` is what counts and
+the unit is recorded beside it, as `top_units` in the run file (same length as `top`, `null` for
+a hit without one; the key is absent when no hit named a unit). Three rules keep the two
+honest:
+
+- A `unit_id` must be `<source>::<path>#<ordinal>` for the page the hit names: the page is
+  everything before the last `#` (a path may contain one), the ordinal a plain number. Any other
+  `unit_id` fails the whole `eval` with the id in the message.
+- A page counts once. When a backend returns several units of one page, the best-ranked hit
+  stands for the page and the rest are dropped before the first `k` are kept, so a unit
+  retriever is measured on pages like every other backend.
+- A hit without a `unit_id` is scored on `page_id` alone, as before.
 
 ## Trail
 
@@ -69,7 +81,10 @@ opaque. Everything optional defaults to empty or unknown, so a consumer logs as 
 
 A unit is one section of a page: the thing `embed` embeds and a hit refers to. Its id is
 `<page_id>#<ordinal>`, the ordinal being the 0-based position of the section within its page in
-document order. `kanon::contracts::units` cuts them exactly as the reference index does.
+document order. The cut and the ids are pinakes's: `kanon::contracts::units` is
+`pinakes::chunks::chunks` under this document's names (`page_id` where `chunks.jsonl` says
+`page`, plus the `version`), and `pinakes chunks` writes the same ids, texts and hashes. A
+consumer that indexes its own units can check its cut against either.
 Version 1 ([schema](../schemas/unit.schema.json)):
 
 ```json

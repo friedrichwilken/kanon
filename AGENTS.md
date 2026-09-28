@@ -28,7 +28,9 @@ belongs in git: a query set, a run, a gate, a report.
 
 **Contracts:** `contracts` (the versioned serde types of the backend contract, the trail and
 the unit, the readers that check a document's version, and the source of the JSON Schemas
-under `docs/schemas/`); it sits on pinakes alone.
+under `docs/schemas/`); it sits on pinakes alone, as does `hit` (the page a retriever
+returned, with the unit that matched when it says so). Units and their ids come from
+`pinakes::chunks`; nothing here cuts a page or numbers a unit itself.
 
 **Measuring:** `eval` (the judge, the metrics, the result file); `embed` (the embeddings file
 pair and the `Embedder` trait); `backend` (the `Backend` trait and `bm25`, `tantivy`, `dense`,

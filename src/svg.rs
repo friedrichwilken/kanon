@@ -808,6 +808,7 @@ mod tests {
             ndcg10: rr,
             rels: vec![],
             top: vec![String::new(); 10],
+            top_units: vec![],
             top_score: None,
         }
     }

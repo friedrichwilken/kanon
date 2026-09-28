@@ -42,7 +42,7 @@
           "format": "double"
         },
         "unit_id": {
-          "description": "The unit that matched (`<page_id>#<ordinal>`), when the backend retrieves units.",
+          "description": "The unit that matched (`<page_id>#<ordinal>`, the id `pinakes chunks` gives it), when\nthe backend retrieves units. `kanon` scores the page: the id must belong to `page_id`,\nand it is recorded next to the page in the run file.",
           "type": [
             "string",
             "null"

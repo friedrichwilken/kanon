@@ -12,16 +12,15 @@
 //! it gets ([`document_version`] then [`check_version`]) and [`read_trail`] on every line.
 //! `pinakes usage` reads the trail without this crate; the schema is the contract between them.
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use pinakes::index::{Page, iter_units};
+use pinakes::chunks::{Chunk, chunk_id, chunks};
+use pinakes::index::Page;
 use pinakes::manifest::split_page_id;
-use pinakes::text::sha256_hex;
 
 /// The backend contract version this crate writes and reads.
 pub const BACKEND_VERSION: u32 = 1;
@@ -144,7 +143,9 @@ pub struct SearchHit {
     /// Heading of the section that matched, empty for the page's intro.
     #[serde(default)]
     pub heading: String,
-    /// The unit that matched (`<page_id>#<ordinal>`), when the backend retrieves units.
+    /// The unit that matched (`<page_id>#<ordinal>`, the id `pinakes chunks` gives it), when
+    /// the backend retrieves units. `kanon` scores the page: the id must belong to `page_id`,
+    /// and it is recorded next to the page in the run file.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unit_id: Option<String>,
 }
@@ -209,33 +210,37 @@ pub struct Unit {
     pub sha256: String,
 }
 
-/// The unit id for `ordinal` within `page_id`.
-pub fn unit_id(page_id: &str, ordinal: usize) -> String {
-    format!("{page_id}#{ordinal}")
+/// The unit is pinakes's [`Chunk`] under this contract's key names (`page_id` for `page`) and
+/// with its version; the id, ordinal, heading, text and hash are the chunk's own.
+impl From<Chunk> for Unit {
+    fn from(chunk: Chunk) -> Unit {
+        Unit {
+            version: UNIT_VERSION,
+            id: chunk.id,
+            page_id: chunk.page,
+            heading: chunk.heading,
+            ordinal: chunk.ordinal,
+            text: chunk.text,
+            sha256: chunk.sha256,
+        }
+    }
 }
 
 /// The retrieval units of the searchable pages, in page then section order, with their ids
-/// and hashes. `pages` must already have [`pinakes::index::mark_mirrors`] applied, as
-/// [`iter_units`] requires.
+/// and hashes: pinakes's [`chunks`], not a second cut of the pages. `pages` must already have
+/// [`pinakes::index::mark_mirrors`] applied.
 pub fn units(pages: &[Page]) -> Vec<Unit> {
-    let mut next_ordinal: BTreeMap<String, usize> = BTreeMap::new();
-    iter_units(pages)
-        .into_iter()
-        .map(|unit| {
-            let ordinal = next_ordinal.entry(unit.page_id.clone()).or_default();
-            let built = Unit {
-                version: UNIT_VERSION,
-                id: unit_id(&unit.page_id, *ordinal),
-                page_id: unit.page_id,
-                heading: unit.heading,
-                ordinal: *ordinal,
-                sha256: sha256_hex(unit.text.as_bytes()),
-                text: unit.text,
-            };
-            *ordinal += 1;
-            built
-        })
-        .collect()
+    chunks(pages).into_iter().map(Unit::from).collect()
+}
+
+/// The page id and ordinal a unit id names: the inverse of [`chunk_id`], cutting at the last
+/// `#` because a page path may contain one. `None` unless the id is exactly what `chunk_id`
+/// writes for a `<source>::<path>` page, so `#01`, `#+1` and `#` alone are rejected.
+pub fn split_unit_id(id: &str) -> Option<(&str, usize)> {
+    let (page_id, ordinal) = id.rsplit_once('#')?;
+    let ordinal: usize = ordinal.parse().ok()?;
+    split_page_id(page_id)?;
+    (chunk_id(page_id, ordinal) == id).then_some((page_id, ordinal))
 }
 
 fn check_ids<'a>(
@@ -292,7 +297,8 @@ pub fn read_trail(path: &Path) -> Result<Vec<TrailEntry>, ContractError> {
 mod tests {
     use super::*;
     use crate::testing::{SourceSpec, write_artifact};
-    use pinakes::index::{Priorities, load_pages, mark_mirrors};
+    use pinakes::index::{Priorities, iter_units, load_pages, mark_mirrors};
+    use pinakes::text::sha256_hex;
 
     fn entry(query: &str) -> TrailEntry {
         TrailEntry {
@@ -428,6 +434,62 @@ mod tests {
         assert_eq!(raw.len(), units.len());
         for (raw, unit) in raw.iter().zip(&units) {
             assert_eq!(raw.text, unit.text);
+        }
+    }
+
+    #[test]
+    fn a_unit_id_splits_at_the_last_hash_into_its_page_and_ordinal() {
+        assert_eq!(
+            split_unit_id("handbook::docs/user/setup.md#2"),
+            Some(("handbook::docs/user/setup.md", 2))
+        );
+        // A page path may contain `#`: only the last one separates the ordinal.
+        assert_eq!(
+            split_unit_id("handbook::docs/c#.md#0"),
+            Some(("handbook::docs/c#.md", 0))
+        );
+        for id in [
+            "handbook::docs/a.md",
+            "handbook::docs/a.md#",
+            "handbook::docs/a.md#one",
+            "handbook::docs/a.md#-1",
+            "handbook::docs/a.md#+1",
+            "handbook::docs/a.md#01",
+            "docs/a.md#0",
+            "#0",
+            "",
+        ] {
+            assert_eq!(split_unit_id(id), None, "{id:?}");
+        }
+    }
+
+    #[test]
+    fn every_unit_id_pinakes_writes_splits_back_into_its_page_and_ordinal() {
+        let dir = tempfile::tempdir().unwrap();
+        write_artifact(
+            dir.path(),
+            &[SourceSpec {
+                name: "handbook",
+                repo: "example-org/handbook",
+                pages: &[(
+                    "docs/a.md",
+                    "Storage",
+                    "# Storage\n\nKeeps files.\n\n## Caching\n\nOn.\n\n## Quotas\n\nOff.\n",
+                )],
+                residue: &[],
+            }],
+        );
+        let mut pages = load_pages(dir.path(), &Priorities::default()).unwrap();
+        mark_mirrors(&mut pages);
+        let units = units(&pages);
+        assert_eq!(units.len(), 3);
+        for unit in &units {
+            assert_eq!(
+                split_unit_id(&unit.id),
+                Some((unit.page_id.as_str(), unit.ordinal)),
+                "{}",
+                unit.id
+            );
         }
     }
 

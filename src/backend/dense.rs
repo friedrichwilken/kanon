@@ -6,7 +6,8 @@ use std::rc::Rc;
 
 use super::{Backend, BackendConfig, BackendError, BackendKind};
 use crate::embed::{EmbedError, Embedder};
-use pinakes::index::{Hit, Page, iter_units, load_pages, mark_mirrors, title_key};
+use crate::hit::Hit;
+use pinakes::index::{Page, iter_units, load_pages, mark_mirrors, title_key};
 
 /// The `dense` backend: an embeddings file loaded from disk, the query embedded
 /// through the same endpoint (and model) that produced it, pages ranked by their best unit's
@@ -178,6 +179,7 @@ fn dense_search(
             page_id: id.to_string(),
             score,
             heading: heading.to_string(),
+            unit_id: None,
         });
         if out.len() == k {
             break;

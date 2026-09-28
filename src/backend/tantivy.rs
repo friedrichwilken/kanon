@@ -11,9 +11,10 @@ use tantivy::schema::{
 use tantivy::{IndexWriter, Searcher, Term};
 
 use super::{Backend, BackendConfig, BackendError};
+use crate::hit::Hit;
 use pinakes::index::{
-    HEADING_BOOST, Hit, Page, PinakesTokenizer, TITLE_BOOST, TOKENIZER_NAME, index_text,
-    load_pages, mark_mirrors, split_sections, title_key, tokenize,
+    HEADING_BOOST, Page, PinakesTokenizer, TITLE_BOOST, TOKENIZER_NAME, index_text, load_pages,
+    mark_mirrors, split_sections, title_key, tokenize,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -195,6 +196,7 @@ impl Backend for TantivyBackend {
                 page_id: id,
                 score: f64::from(score),
                 heading,
+                unit_id: None,
             });
             if out.len() == k {
                 break;

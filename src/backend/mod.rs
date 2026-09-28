@@ -17,8 +17,9 @@ use thiserror::Error;
 
 use crate::contracts::ContractError;
 use crate::embed::{EmbedError, Embedder};
+use crate::hit::Hit;
 use pinakes::corpus::CorpusError;
-use pinakes::index::{Hit, IndexError, Priorities};
+use pinakes::index::{IndexError, Priorities};
 
 mod bm25;
 mod dense;

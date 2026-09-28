@@ -3,7 +3,8 @@
 use std::path::Path;
 
 use super::{Backend, BackendConfig, BackendError};
-use pinakes::index::{Hit, Index};
+use crate::hit::Hit;
+use pinakes::index::Index;
 
 /// pinakes's reference index (`Index`), wrapped to implement [`Backend`]; the search rules are
 /// unchanged, see [`pinakes::index`].
@@ -32,7 +33,12 @@ impl Backend for Bm25Backend {
         k: usize,
         module: Option<&str>,
     ) -> Result<Vec<Hit>, BackendError> {
-        Ok(self.0.search(query, k, module)?)
+        Ok(self
+            .0
+            .search(query, k, module)?
+            .into_iter()
+            .map(Hit::from)
+            .collect())
     }
 
     fn page_count(&self) -> usize {
@@ -58,9 +64,15 @@ mod tests {
         let index = Index::build(dir.path(), &Priorities::default()).unwrap();
         assert_eq!(backend.page_count(), index.page_count());
         assert_eq!(backend.searchable_count(), index.searchable_count());
+        let expected: Vec<Hit> = index
+            .search("upload caching", 10, None)
+            .unwrap()
+            .into_iter()
+            .map(Hit::from)
+            .collect();
         assert_eq!(
             backend.search("upload caching", 10, None).unwrap(),
-            index.search("upload caching", 10, None).unwrap()
+            expected
         );
     }
 }

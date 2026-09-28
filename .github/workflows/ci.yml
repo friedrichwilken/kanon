@@ -81,6 +81,11 @@ jobs:
       - uses: rustsec/audit-check@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+      # An ignore in .cargo/audit.toml that is no longer needed is not reported by cargo audit.
+      - name: ignored advisories are still needed
+        run: |
+          command -v cargo-audit >/dev/null || cargo install cargo-audit --locked
+          scripts/check-audit-ignores.sh
 
   # Self-test of the reusable gate (.github/workflows/eval.yml and action.yml): the golden
   # fixture against its committed baseline, with kanon built from this commit. Ubuntu only.

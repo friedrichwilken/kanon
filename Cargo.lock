@@ -1136,7 +1136,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 [[package]]
 name = "pinakes"
 version = "1.1.0"
-source = "git+https://github.com/friedrichwilken/pinakes?rev=3f9be6dae368bb0dcb0574e36664cc35f2ba01a6#3f9be6dae368bb0dcb0574e36664cc35f2ba01a6"
+source = "git+https://github.com/friedrichwilken/pinakes?rev=f01e2e36db06bd40893b13ed3e6b656152d4af1a#f01e2e36db06bd40893b13ed3e6b656152d4af1a"
 dependencies = [
  "anyhow",
  "clap",
@@ -1144,6 +1144,7 @@ dependencies = [
  "globset",
  "jiff",
  "regex",
+ "schemars",
  "serde",
  "serde_json",
  "serde_yaml_ng",

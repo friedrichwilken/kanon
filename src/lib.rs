@@ -11,7 +11,7 @@
 //! `usize -> f64` cast) and `rng` (the one seeded PRNG); [`llm`] (the model endpoint from the
 //! environment) sits on `env`. [`contracts`] sits on pinakes alone: the serde types of the
 //! backend contract, the trail and the unit, with their versions, that every reader and writer
-//! of those documents goes through.
+//! of those documents goes through. So does [`hit`], the page a retriever returned.
 //!
 //! [`eval`] is the judge (`queries.jsonl`), the metrics and the result file; [`embed`] writes
 //! and reads the embeddings file pair; [`backend`] is the [`backend::Backend`] trait and its
@@ -35,6 +35,7 @@ pub mod error;
 pub mod eval;
 pub mod grade;
 pub mod history;
+pub mod hit;
 pub mod llm;
 mod num;
 pub mod queries;

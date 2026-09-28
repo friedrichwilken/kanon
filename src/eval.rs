@@ -32,8 +32,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::hit::Hit;
 use crate::num::float;
-use pinakes::index::{Hit, Index, IndexError};
+use pinakes::index::{Index, IndexError};
 use pinakes::jsonl::{self, JsonlError};
 
 pub use crate::config::GateMetric;
@@ -300,6 +301,11 @@ pub struct QueryResult {
     /// The page ids returned, best first.
     #[serde(default)]
     pub top: Vec<String>,
+    /// The unit each returned page matched on (`<page id>#<ordinal>`), same length as `top`,
+    /// `null` for a page whose hit named none. Left out when no hit named a unit, which is
+    /// every result of a backend that ranks pages.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub top_units: Vec<Option<String>>,
     /// The backend's score of the first returned page, rounded to six decimals; absent when
     /// nothing came back.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -329,14 +335,20 @@ impl QueryResult {
             ndcg10: ndcg(&rels, &ideal, k.min(10)),
             rels,
             top,
+            top_units: Vec::new(),
             top_score,
         }
     }
 
-    /// Score a backend's hits (best first) against the query's expectations.
+    /// Score a backend's hits (best first) against the query's expectations. The page decides
+    /// the score; a hit's unit id is only recorded, in `top_units`, when any hit has one.
     pub fn of_hits(query: &Query, hits: &[Hit], k: usize) -> QueryResult {
         let top = hits.iter().map(|hit| hit.page_id.clone()).collect();
-        QueryResult::score(query, top, hits.first().map(|hit| hit.score), k)
+        let mut row = QueryResult::score(query, top, hits.first().map(|hit| hit.score), k);
+        if hits.iter().any(|hit| hit.unit_id.is_some()) {
+            row.top_units = hits.iter().map(|hit| hit.unit_id.clone()).collect();
+        }
+        row
     }
 
     /// Whether the row is a negative query (`kind: "negative"`).
@@ -491,7 +503,11 @@ pub fn evaluate(
 ) -> Result<EvalSummary, EvalError> {
     let mut rows = Vec::with_capacity(queries.len());
     for query in queries {
-        let hits = index.search(&query.query, k, None)?;
+        let hits: Vec<Hit> = index
+            .search(&query.query, k, None)?
+            .into_iter()
+            .map(Hit::from)
+            .collect();
         rows.push(QueryResult::of_hits(query, &hits, k));
     }
     Ok(summarise(rows, negative_threshold))
@@ -841,24 +857,74 @@ mod tests {
         assert!(row.hit10);
         assert!((row.ndcg10 - 0.5).abs() < 1e-12, "{}", row.ndcg10);
 
+        let hit = |page_id: &str, score: f64, unit_id: Option<&str>| Hit {
+            page_id: page_id.into(),
+            score,
+            heading: String::new(),
+            unit_id: unit_id.map(str::to_string),
+        };
         let hits = vec![
-            Hit {
-                page_id: "s::docs/x.md".into(),
-                score: 4.25,
-                heading: String::new(),
-            },
-            Hit {
-                page_id: "s::other/1.md".into(),
-                score: 1.0,
-                heading: String::new(),
-            },
+            hit("s::docs/x.md", 4.25, None),
+            hit("s::other/1.md", 1.0, None),
         ];
         let row = QueryResult::of_hits(&query, &hits, 10);
         assert_eq!(row.top, ["s::docs/x.md", "s::other/1.md"]);
         assert_eq!(row.top_score, Some(4.25));
         assert!(row.hit5 && (row.ndcg5 - 1.0).abs() < 1e-12);
+        assert!(row.top_units.is_empty(), "no hit named a unit");
         let none = QueryResult::of_hits(&query, &[], 10);
         assert!(none.top.is_empty() && none.top_score.is_none() && none.rels.is_empty());
+    }
+
+    #[test]
+    fn a_unit_id_is_recorded_beside_its_page_and_never_changes_the_score() {
+        let query = Query {
+            id: "q".into(),
+            query: String::new(),
+            expected: vec!["s::docs/x.md".into()],
+            graded: BTreeMap::new(),
+            kind: String::new(),
+            holdout: false,
+            origin: None,
+        };
+        let hit = |page_id: &str, unit_id: Option<&str>| Hit {
+            page_id: page_id.into(),
+            score: 1.0,
+            heading: String::new(),
+            unit_id: unit_id.map(str::to_string),
+        };
+        let with_units = [
+            hit("s::other/1.md", Some("s::other/1.md#3")),
+            hit("s::docs/x.md", None),
+        ];
+        let without = [hit("s::other/1.md", None), hit("s::docs/x.md", None)];
+        let row = QueryResult::of_hits(&query, &with_units, 10);
+        assert_eq!(row.top_units, [Some("s::other/1.md#3".to_string()), None]);
+        let plain = QueryResult::of_hits(&query, &without, 10);
+        assert_eq!(
+            QueryResult {
+                top_units: Vec::new(),
+                ..row.clone()
+            },
+            plain
+        );
+        // Written with the nulls, read back the same; a row without units writes no key.
+        let json = serde_json::to_string(&row).unwrap();
+        assert!(
+            json.contains(r#""top_units":["s::other/1.md#3",null]"#),
+            "{json}"
+        );
+        assert_eq!(serde_json::from_str::<QueryResult>(&json).unwrap(), row);
+        assert!(!serde_json::to_string(&plain).unwrap().contains("top_units"));
+    }
+
+    #[test]
+    fn a_result_row_written_before_top_units_still_reads() {
+        let old = r#"{"id": "q", "kind": "howto", "holdout": false, "hit5": true, "hit10": true,
+            "rr": 1.0, "ndcg5": 1.0, "ndcg10": 1.0, "rels": [1], "top": ["s::a.md"]}"#;
+        let row: QueryResult = serde_json::from_str(old).unwrap();
+        assert_eq!(row.top, ["s::a.md"]);
+        assert!(row.top_units.is_empty());
     }
 
     fn graded_query(expected: &[&str], graded: &[(&str, u8)]) -> Query {

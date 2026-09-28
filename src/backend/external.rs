@@ -1,11 +1,15 @@
 //! `external`: a consumer's own store, over HTTP.
 
+use std::collections::HashSet;
 use std::path::Path;
 use std::time::Duration;
 
 use super::{Backend, BackendConfig, BackendError};
-use crate::contracts::{self, BACKEND_VERSION, SearchRequest, SearchResponse};
-use pinakes::index::{Hit, load_pages, mark_mirrors};
+use crate::contracts::{
+    self, BACKEND_VERSION, SearchHit, SearchRequest, SearchResponse, split_unit_id,
+};
+use crate::hit::Hit;
+use pinakes::index::{load_pages, mark_mirrors};
 
 /// External backend timeout.
 const EXTERNAL_TIMEOUT: Duration = Duration::from_secs(30);
@@ -13,8 +17,9 @@ const EXTERNAL_TIMEOUT: Duration = Duration::from_secs(30);
 /// `external`: `POST {backend_url}/search` with a [`SearchRequest`], expecting a
 /// [`SearchResponse`] (the backend contract, `docs/manual/contracts.md`). Used to evaluate a
 /// store a consumer already runs; a failed request, a malformed response or a response of a
-/// newer contract version fails the whole `eval`. A hit's `unit_id` is parsed and, for now,
-/// not used: the [`Hit`] `eval` scores is the page.
+/// newer contract version fails the whole `eval`. `eval` scores pages: a hit that names a
+/// `unit_id` is checked against its `page_id` and the unit is recorded, and a page a backend
+/// returns more than once counts once, at its best rank.
 pub struct ExternalBackend {
     url: String,
     agent: ureq::Agent,
@@ -86,16 +91,7 @@ impl Backend for ExternalBackend {
         contracts::check_version(version, BACKEND_VERSION, &url)?;
         let parsed: SearchResponse =
             serde_json::from_str(&text).map_err(|err| bad_response(err.to_string()))?;
-        Ok(parsed
-            .hits
-            .into_iter()
-            .take(k)
-            .map(|hit| Hit {
-                page_id: hit.page_id,
-                score: hit.score,
-                heading: hit.heading,
-            })
-            .collect())
+        page_hits(parsed.hits, k).map_err(bad_response)
     }
 
     fn page_count(&self) -> usize {
@@ -107,11 +103,174 @@ impl Backend for ExternalBackend {
     }
 }
 
+/// The first `k` distinct pages of a response's hits, best first.
+///
+/// A backend that retrieves units may return several units of one page; `eval` scores pages,
+/// so the best-ranked hit of a page stands for it, as the built-in backends do. A kept hit's
+/// `unit_id` must be `<page_id>#<ordinal>` (see [`split_unit_id`]) for the page it names as
+/// `page_id`; a hit that says otherwise is the backend's bug and fails the response with the
+/// offending id, rather than being scored against a page it did not retrieve. Only the shape
+/// is checked, not that the unit or the page exists in the artifact. A hit past the first `k`
+/// pages, or a repeat of a page already kept, is never scored or recorded, so it is not checked.
+fn page_hits(hits: Vec<SearchHit>, k: usize) -> Result<Vec<Hit>, String> {
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for hit in hits {
+        if out.len() == k {
+            break;
+        }
+        if !seen.insert(hit.page_id.clone()) {
+            continue;
+        }
+        if let Some(unit_id) = &hit.unit_id {
+            match split_unit_id(unit_id) {
+                Some((page_id, _)) if page_id == hit.page_id => {}
+                Some((page_id, _)) => {
+                    return Err(format!(
+                        "unit_id {unit_id:?} belongs to page {page_id:?}, not to the hit's page_id {:?}",
+                        hit.page_id
+                    ));
+                }
+                None => {
+                    return Err(format!(
+                        "unit_id {unit_id:?} is not <source>::<path>#<ordinal>, as `pinakes chunks` numbers units"
+                    ));
+                }
+            }
+        }
+        out.push(Hit {
+            page_id: hit.page_id,
+            score: hit.score,
+            heading: hit.heading,
+            unit_id: hit.unit_id,
+        });
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::backend::testing::fixture_pages;
     use crate::testing::read_http_request;
+
+    fn search_hit(page_id: &str, unit_id: Option<&str>) -> SearchHit {
+        SearchHit {
+            page_id: page_id.to_string(),
+            score: 1.0,
+            heading: String::new(),
+            unit_id: unit_id.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn a_unit_hit_is_scored_as_its_page_and_keeps_its_unit() {
+        let hits = page_hits(
+            vec![
+                search_hit("handbook::docs/a.md", Some("handbook::docs/a.md#2")),
+                search_hit("handbook::docs/b.md", None),
+            ],
+            10,
+        )
+        .unwrap();
+        assert_eq!(hits[0].page_id, "handbook::docs/a.md");
+        assert_eq!(hits[0].unit_id.as_deref(), Some("handbook::docs/a.md#2"));
+        assert_eq!(hits[1].unit_id, None);
+    }
+
+    #[test]
+    fn a_page_returned_twice_counts_once_at_its_best_rank() {
+        let hits = page_hits(
+            vec![
+                search_hit("handbook::docs/a.md", Some("handbook::docs/a.md#1")),
+                search_hit("handbook::docs/b.md", None),
+                search_hit("handbook::docs/a.md", Some("handbook::docs/a.md#0")),
+                search_hit("handbook::docs/c.md", None),
+            ],
+            2,
+        )
+        .unwrap();
+        let pages: Vec<&str> = hits.iter().map(|h| h.page_id.as_str()).collect();
+        assert_eq!(pages, ["handbook::docs/a.md", "handbook::docs/b.md"]);
+        assert_eq!(hits[0].unit_id.as_deref(), Some("handbook::docs/a.md#1"));
+    }
+
+    #[test]
+    fn a_unit_id_that_does_not_belong_to_its_page_fails_the_response() {
+        let err = page_hits(
+            vec![search_hit(
+                "handbook::docs/a.md",
+                Some("handbook::docs/b.md#0"),
+            )],
+            10,
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("belongs to page \"handbook::docs/b.md\""),
+            "{err}"
+        );
+        for bad in ["handbook::docs/a.md", "handbook::docs/a.md#x", "#0"] {
+            let err =
+                page_hits(vec![search_hit("handbook::docs/a.md", Some(bad))], 10).unwrap_err();
+            assert!(err.contains(&format!("{bad:?}")), "{err}");
+        }
+    }
+
+    #[test]
+    fn a_hit_that_is_never_kept_is_not_checked() {
+        // Past the first `k` pages, and a repeat of a kept page: neither is scored or recorded,
+        // so a malformed unit_id on them changes nothing.
+        let hits = page_hits(
+            vec![
+                search_hit("handbook::docs/a.md", None),
+                search_hit("handbook::docs/a.md", Some("opaque-1")),
+                search_hit("handbook::docs/b.md", Some("opaque-2")),
+            ],
+            1,
+        )
+        .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].unit_id, None);
+        // Kept, the same id fails.
+        let err = page_hits(
+            vec![
+                search_hit("handbook::docs/a.md", None),
+                search_hit("handbook::docs/b.md", Some("opaque-2")),
+            ],
+            2,
+        )
+        .unwrap_err();
+        assert!(err.contains("\"opaque-2\""), "{err}");
+    }
+
+    #[test]
+    fn a_page_returned_twice_without_units_counts_once_too() {
+        let hits = page_hits(
+            vec![
+                search_hit("handbook::docs/a.md", None),
+                search_hit("handbook::docs/a.md", None),
+                search_hit("handbook::docs/b.md", None),
+            ],
+            2,
+        )
+        .unwrap();
+        let pages: Vec<&str> = hits.iter().map(|h| h.page_id.as_str()).collect();
+        assert_eq!(pages, ["handbook::docs/a.md", "handbook::docs/b.md"]);
+    }
+
+    #[test]
+    fn a_page_path_with_a_hash_keeps_its_page_and_its_unit() {
+        let hits = page_hits(
+            vec![search_hit(
+                "handbook::docs/c#.md",
+                Some("handbook::docs/c#.md#3"),
+            )],
+            5,
+        )
+        .unwrap();
+        assert_eq!(hits[0].page_id, "handbook::docs/c#.md");
+        assert_eq!(hits[0].unit_id.as_deref(), Some("handbook::docs/c#.md#3"));
+    }
 
     #[test]
     fn external_backend_sends_the_request_and_parses_the_response() {
@@ -152,6 +311,10 @@ mod tests {
         assert_eq!(hits[0].page_id, "handbook::docs/user/README.md");
         assert!((hits[0].score - 1.5).abs() < 1e-12);
         assert_eq!(hits[0].heading, "Upload caching");
+        assert_eq!(
+            hits[0].unit_id.as_deref(),
+            Some("handbook::docs/user/README.md#1")
+        );
         handle.join().unwrap();
     }
 

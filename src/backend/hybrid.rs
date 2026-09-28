@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use super::{Backend, BackendConfig, BackendError, Bm25Backend, DenseBackend};
+use crate::hit::Hit;
 use crate::num::float;
-use pinakes::index::Hit;
 
 /// `k` in the reciprocal rank fusion formula.
 pub const RRF_K: f64 = 60.0;
@@ -40,6 +40,7 @@ pub fn reciprocal_rank_fusion(rankings: &[&[Hit]], k: usize) -> Vec<Hit> {
             score: scores[&id],
             heading: headings.remove(&id).unwrap_or_default(),
             page_id: id,
+            unit_id: None,
         })
         .collect()
 }
@@ -101,34 +102,17 @@ mod tests {
 
     #[test]
     fn reciprocal_rank_fusion_matches_the_formula_by_hand() {
-        let a = [
-            Hit {
-                page_id: "p1".into(),
-                score: 1.0,
-                heading: String::new(),
-            },
-            Hit {
-                page_id: "p2".into(),
-                score: 0.9,
-                heading: String::new(),
-            },
-        ];
+        let hit = |page_id: &str, score: f64, heading: &str| Hit {
+            page_id: page_id.into(),
+            score,
+            heading: heading.into(),
+            unit_id: None,
+        };
+        let a = [hit("p1", 1.0, ""), hit("p2", 0.9, "")];
         let b = [
-            Hit {
-                page_id: "p2".into(),
-                score: 5.0,
-                heading: "H2".into(),
-            },
-            Hit {
-                page_id: "p1".into(),
-                score: 4.0,
-                heading: String::new(),
-            },
-            Hit {
-                page_id: "p3".into(),
-                score: 3.0,
-                heading: "H3".into(),
-            },
+            hit("p2", 5.0, "H2"),
+            hit("p1", 4.0, ""),
+            hit("p3", 3.0, "H3"),
         ];
         let fused = reciprocal_rank_fusion(&[&a, &b], 10);
         // p1: 1/(60+1) + 1/(60+2); p2: 1/(60+2) + 1/(60+1); p3: 1/(60+3).

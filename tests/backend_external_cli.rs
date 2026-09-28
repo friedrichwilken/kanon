@@ -20,9 +20,19 @@ fn kanon(dir: &Path, args: &[&str]) -> std::process::Output {
         .expect("kanon runs")
 }
 
-/// Answer one `POST /search` with a fixed hit, tolerating the `Expect: 100-continue` ureq sends
+/// The hit the stand-in endpoint answers with: the page, and the unit of it that matched.
+fn hit(unit_id: &str) -> SearchHit {
+    SearchHit {
+        page_id: "handbook::docs/user/README.md".to_string(),
+        score: 2.0,
+        heading: "Storage".to_string(),
+        unit_id: Some(unit_id.to_string()),
+    }
+}
+
+/// Answer one `POST /search` with `hit`, tolerating the `Expect: 100-continue` ureq sends
 /// with the request body. The request body must be a [`SearchRequest`] of the current version.
-fn serve_one_search(listener: &TcpListener) {
+fn serve_one_search(listener: &TcpListener, hit: SearchHit) {
     let (mut stream, _) = listener.accept().unwrap();
     let mut buf = Vec::new();
     let mut chunk = [0u8; 4096];
@@ -60,12 +70,7 @@ fn serve_one_search(listener: &TcpListener) {
     }
     let body = serde_json::to_string(&SearchResponse {
         version: BACKEND_VERSION,
-        hits: vec![SearchHit {
-            page_id: "handbook::docs/user/README.md".to_string(),
-            score: 2.0,
-            heading: "Storage".to_string(),
-            unit_id: Some("handbook::docs/user/README.md#0".to_string()),
-        }],
+        hits: vec![hit],
     })
     .unwrap();
     let response = format!(
@@ -99,7 +104,9 @@ fn external_backend_runs_through_the_cli() {
     let dir = workspace();
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    let handle = std::thread::spawn(move || serve_one_search(&listener));
+    let handle = std::thread::spawn(move || {
+        serve_one_search(&listener, hit("handbook::docs/user/README.md#0"));
+    });
 
     let out = kanon(
         dir.path(),
@@ -127,6 +134,11 @@ fn external_backend_runs_through_the_cli() {
         summary["queries"][0]["top"][0],
         "handbook::docs/user/README.md"
     );
+    // The unit the hit named is recorded next to its page in the run.
+    assert_eq!(
+        summary["queries"][0]["top_units"][0],
+        "handbook::docs/user/README.md#0"
+    );
 
     // No --backend-url is a config error, exit 1.
     let out = kanon(
@@ -141,4 +153,32 @@ fn external_backend_runs_through_the_cli() {
     );
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains("--backend-url"));
+}
+
+#[test]
+fn a_unit_id_of_another_page_fails_the_eval_naming_the_id() {
+    let dir = workspace();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let handle = std::thread::spawn(move || {
+        serve_one_search(&listener, hit("handbook::docs/other.md#0"));
+    });
+
+    let out = kanon(
+        dir.path(),
+        &[
+            "eval",
+            "--queries",
+            "queries.jsonl",
+            "--backend",
+            "external",
+            "--backend-url",
+            &format!("http://{addr}"),
+        ],
+    );
+    handle.join().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("handbook::docs/other.md#0"), "{stderr}");
+    assert!(stderr.contains("belongs to page"), "{stderr}");
 }

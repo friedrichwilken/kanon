@@ -15,12 +15,13 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use pinakes::index::{Hit, Page};
+use pinakes::index::Page;
 use pinakes::jsonl::{self, KeyOrder};
 use pinakes::llm::{self, ChatError, ChatTransport, LlmConfig};
 use pinakes::residue;
 
 use crate::contracts::TrailEntry;
+use crate::hit::Hit;
 
 /// Default `--k`.
 pub const DEFAULT_K: usize = 20;
@@ -206,6 +207,7 @@ mod tests {
             page_id: page_id.to_string(),
             score: 1.0,
             heading: String::new(),
+            unit_id: None,
         }
     }
 

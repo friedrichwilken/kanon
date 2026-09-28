@@ -871,6 +871,7 @@ mod tests {
                 at: "2026-09-16T12:00:00Z".to_string(),
                 backend: "bm25".to_string(),
                 manifest_sha256: "0123456789abcdef".repeat(4),
+                artifact_version: None,
                 queries_sha256: "fedcba9876543210".repeat(4),
                 k: 10,
             }),

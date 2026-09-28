@@ -107,6 +107,32 @@ heading, with an empty `heading`. `text` is the title, heading and body joined a
 without exchanging the text. Pages a higher-priority source mirrors are not searchable and
 yield no units.
 
+## The artifact
+
+The artifact directory is pinakes's contract, not kanon's: `kanon` defines no type for
+`manifest.json` or a source's `meta.json` and reads them only through pinakes
+(`load_pages`, `Manifest::load`). For a consumer in another language, the shape of
+`manifest.json` is pinakes's `docs/schemas/manifest.schema.json`.
+
+The contract carries one integer, `artifact_version`, in `manifest.json` and in every
+`meta.json`; a missing one means 1. A reader accepts an equal or lower version and rejects a
+higher one, and `kanon` passes pinakes's one line on unchanged, with the file it came from:
+
+```text
+artifact/manifest.json: artifact version 2 is newer than this pinakes supports (1); upgrade pinakes
+```
+
+That stops `eval`, `eval --backend`, `eval --compare` and `grade` when a source's `meta.json`
+is newer, and `eval --out` and `embed` when the artifact's `manifest.json` is (they are the
+commands that read it), in every case before a query or an embedding is made. An artifact
+whose `manifest.json` is not a manifest at all fails the same two commands with the loader's
+error rather than being hashed anyway.
+
+A run file records the version it measured as `run.artifact_version`, next to
+`manifest_sha256`, so a series says which contract each number came from. It is absent when the
+artifact has no manifest, and in run files written before the field existed; `kanon history
+--json` shows it per row as `artifact_version`, `null` when absent.
+
 ## Keeping the schemas honest
 
 `tests/schemas.rs` generates the schemas from the types and fails when the committed files

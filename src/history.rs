@@ -62,6 +62,11 @@ pub struct RunInfo {
     pub backend: String,
     /// `sha256` of `<artifact>/manifest.json`, or `"none"` when the artifact has no manifest.
     pub manifest_sha256: String,
+    /// The `artifact_version` in that manifest, so a run says which artifact contract it
+    /// measured; absent when the artifact has no manifest, and in a run file written before
+    /// this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_version: Option<u32>,
     /// `sha256` of the query file's bytes.
     pub queries_sha256: String,
     /// Result list length used.
@@ -233,6 +238,9 @@ pub struct HistoryRow {
     pub holdout: Option<Metrics>,
     /// `sha256` of the artifact's manifest at the time (`"none"` for no manifest).
     pub manifest_sha256: Option<String>,
+    /// The artifact contract version that manifest declared; `None` when the run has none.
+    #[serde(default)]
+    pub artifact_version: Option<u32>,
     /// `sha256` of the query file at the time.
     pub queries_sha256: Option<String>,
     /// Result list length used.
@@ -260,6 +268,7 @@ impl HistoryRow {
             tuning: run.summary.tuning.overall,
             holdout: run.summary.holdout.as_ref().map(|s| s.overall),
             manifest_sha256: info.map(|i| i.manifest_sha256.clone()),
+            artifact_version: info.and_then(|i| i.artifact_version),
             queries_sha256: info.map(|i| i.queries_sha256.clone()),
             k: info.map(|i| i.k),
             at: info.map(|i| i.at.clone()),
@@ -363,6 +372,7 @@ mod tests {
             at: "2026-09-16T12:00:00Z".to_string(),
             backend: "bm25".to_string(),
             manifest_sha256: "ab".repeat(32),
+            artifact_version: Some(1),
             queries_sha256: "cd".repeat(32),
             k: 10,
         }
@@ -558,5 +568,38 @@ mod tests {
         // A missing directory is an error naming it.
         let err = read_history(&dir.path().join("missing")).unwrap_err();
         assert!(err.to_string().contains("missing"), "{err}");
+    }
+
+    #[test]
+    fn the_artifact_version_is_recorded_and_a_run_without_one_still_reads() {
+        let with = serde_json::to_string(&info("a")).unwrap();
+        assert!(with.contains(r#""artifact_version":1"#), "{with}");
+        assert_eq!(serde_json::from_str::<RunInfo>(&with).unwrap(), info("a"));
+
+        // A run recorded for a manifest-less artifact writes no key, and a run file from before
+        // the field existed reads as `None`, in the run and in its history row.
+        let without = RunInfo {
+            artifact_version: None,
+            ..info("b")
+        };
+        let text = serde_json::to_string(&without).unwrap();
+        assert!(!text.contains("artifact_version"), "{text}");
+        let read: RunInfo = serde_json::from_str(&text).unwrap();
+        assert_eq!(read.artifact_version, None);
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("001-a.json");
+        let mut run = Run {
+            summary: summary(true),
+            run: Some(info("a")),
+        };
+        fs::write(&path, run.to_json().unwrap()).unwrap();
+        assert_eq!(
+            read_history(dir.path()).unwrap()[0].artifact_version,
+            Some(1)
+        );
+        run.run = Some(without);
+        fs::write(&path, run.to_json().unwrap()).unwrap();
+        assert_eq!(read_history(dir.path()).unwrap()[0].artifact_version, None);
     }
 }

@@ -116,7 +116,8 @@ nothing else. `--backend NAME`, `grade --backend NAME` and the config's `backend
 
 `eval --out runs/` also writes the result as `runs/NNN-<label>.json`, numbered after the last
 run in the directory and labelled with `--label` or the git short SHA, with the backend, the
-manifest and query-set hashes and the time inside. `kanon history` lists those runs as a
+manifest and query-set hashes, the manifest's `artifact_version` (which pinakes contract the
+run measured) and the time inside. `kanon history` lists those runs as a
 Markdown table (`--json OUT` for the rows as JSON), and `report --runs runs/` adds the same
 table as a History section. Commit the directory and the numbers have a series.
 

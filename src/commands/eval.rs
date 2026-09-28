@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+use crate::artifact;
 use crate::backend::{self, Backend, BackendConfig, BackendError, BackendKind, BackendSpec};
 use crate::config::{
     Config, DEFAULT_K, DEFAULT_MAX_RECALL_DROP, GateMetric, NamedBackend, UnknownBackend,
@@ -134,6 +135,7 @@ pub fn eval(paths: &Paths, options: &EvalOptions) -> Result<EvalOutcome, Command
     let rules = Rules::of(eval_config, options.gate_metric, options.negative_threshold);
     let priorities = settings.priorities;
     let queries = eval::load_queries(&queries_path)?;
+    let artifact_version = recorded_artifact_version(paths, options.out.as_deref())?;
     let pages = index::load_pages(&paths.artifact, &priorities)?;
 
     let (summary, page_count, searchable_count, delta) =
@@ -166,6 +168,7 @@ pub fn eval(paths: &Paths, options: &EvalOptions) -> Result<EvalOutcome, Command
             &queries_path,
             k,
             &summary,
+            artifact_version,
         )?),
         None => None,
     };
@@ -180,9 +183,23 @@ pub fn eval(paths: &Paths, options: &EvalOptions) -> Result<EvalOutcome, Command
     })
 }
 
+/// The artifact contract version a run written to `out` records, read before any query runs
+/// so a manifest of a newer contract stops the run instead of being measured. `None` when
+/// nothing is written, or the artifact has no manifest.
+fn recorded_artifact_version(
+    paths: &Paths,
+    out: Option<&Path>,
+) -> Result<Option<u32>, CommandError> {
+    match out {
+        Some(_) => Ok(artifact::manifest_artifact_version(&paths.artifact)?),
+        None => Ok(None),
+    }
+}
+
 /// Write `summary` as the next run file in `dir`, with a [`RunInfo`] tying it to the artifact's
-/// manifest, the query file and `k`. The backend recorded is the result's own, or `bm25` for
-/// the plain path, which measures the reference index and leaves the field empty.
+/// manifest (its hash and `artifact_version`), the query file and `k`. The backend recorded is
+/// the result's own, or `bm25` for the plain path, which measures the reference index and
+/// leaves the field empty.
 fn write_run(
     paths: &Paths,
     dir: &Path,
@@ -190,6 +207,7 @@ fn write_run(
     queries_path: &Path,
     k: usize,
     summary: &EvalSummary,
+    artifact_version: Option<u32>,
 ) -> Result<PathBuf, CommandError> {
     let backend = if summary.backend.is_empty() {
         BackendKind::Bm25.name().to_string()
@@ -204,6 +222,7 @@ fn write_run(
             at: pinakes::manifest::now_rfc3339(),
             backend,
             manifest_sha256: crate::embed::artifact_manifest_hash(&paths.artifact)?,
+            artifact_version,
             queries_sha256: pinakes::text::sha256_hex(&queries_bytes),
             k,
         }),
@@ -377,6 +396,7 @@ pub fn eval_backend(
     let rules = Rules::of(eval_config, options.gate_metric, options.negative_threshold);
     let priorities = settings.priorities;
     let queries = eval::load_queries(&queries_path)?;
+    let artifact_version = recorded_artifact_version(paths, options.out.as_deref())?;
     let adjusting = !options.with.is_empty() || !options.without.is_empty();
     if adjusting && options.backend.kind != BackendKind::Bm25 {
         return Err(BackendError::UnsupportedAdjustment(options.backend.name.clone()).into());
@@ -426,6 +446,7 @@ pub fn eval_backend(
             &queries_path,
             k,
             &summary,
+            artifact_version,
         )?),
         None => None,
     };

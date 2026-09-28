@@ -19,6 +19,7 @@
 set -euo pipefail
 
 OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434}"
+OLLAMA_URL="${OLLAMA_URL%/}" # a trailing slash would make every request path start with //
 EMBED_MODEL="${EMBED_MODEL:-nomic-embed-text}"
 CHAT_MODEL="${CHAT_MODEL:-llama3.2:3b}"
 KANON="${KANON:-kanon}"
@@ -52,7 +53,9 @@ cd "$work"
 
 export KANON_EMBED_URL="$OLLAMA_URL/v1" KANON_EMBED_MODEL="$EMBED_MODEL"
 export KANON_LLM_URL="$OLLAMA_URL/v1" KANON_LLM_MODEL="$CHAT_MODEL"
-unset KANON_EMBED_KEY KANON_LLM_KEY PINAKES_EMBED_URL PINAKES_LLM_URL
+# A key or URL left over from another setup must not be sent to (or replace) the local server.
+unset KANON_EMBED_KEY KANON_LLM_KEY PINAKES_EMBED_URL PINAKES_LLM_URL \
+  PINAKES_EMBED_KEY PINAKES_LLM_KEY PINAKES_EMBED_MODEL PINAKES_LLM_MODEL
 
 step "kanon embed"
 "$KANON" embed --batch "$BATCH"
@@ -77,6 +80,10 @@ for backend in bm25 dense hybrid; do
     "$(jq -r --arg b "$backend" '.[$b].tuning.overall["recall@5"]' compare.json)" \
     "$(jq -r --arg b "$backend" '.[$b].tuning.overall.mrr' compare.json)" >&2
 done
+# Whatever the model, a dense backend that finds none of the expected pages in ten tries has not
+# embedded or searched anything usable: a broken setup, not a weak model.
+jq -e '.dense.tuning.overall["recall@10"] > 0' compare.json >/dev/null \
+  || fail "the dense backend found no expected page in any top 10: check the embeddings endpoint and model"
 if [[ -n "$MIN_DENSE_RECALL5" ]]; then
   jq -e --argjson min "$MIN_DENSE_RECALL5" '.dense.tuning.overall["recall@5"] >= $min' compare.json >/dev/null \
     || fail "dense recall@5 is below $MIN_DENSE_RECALL5"

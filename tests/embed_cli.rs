@@ -210,3 +210,99 @@ fn embed_flags_set_or_switch_off_the_prefixes() {
     assert!(received[0].starts_with("Storage"), "{received:?}");
     assert_eq!(manifest["doc_prefix"], "");
 }
+
+#[test]
+fn eval_embeds_each_query_with_the_prefix_embed_recorded_for_dense_and_hybrid() {
+    let dir = workspace();
+    fs::write(
+        dir.path().join("queries.jsonl"),
+        "{\"id\": \"q\", \"kind\": \"howto\", \"query\": \"enable upload caching\", \
+         \"expected\": [\"handbook/docs/user\"]}\n",
+    )
+    .unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let url = format!("http://{addr}");
+    // One request for `embed`, one query embedding each for `dense` and for `hybrid`.
+    let handle = std::thread::spawn(move || {
+        (0..3)
+            .map(|_| serve_embeddings(&listener))
+            .collect::<Vec<_>>()
+    });
+    let env = [("KANON_EMBED_URL", url.as_str())];
+
+    let out = kanon(dir.path(), &["embed", "--model", "nomic-embed-text"], &env);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    for backend in ["dense", "hybrid"] {
+        let out = kanon(
+            dir.path(),
+            &["eval", "--queries", "queries.jsonl", "--backend", backend],
+            &env,
+        );
+        assert!(
+            out.status.success(),
+            "{backend}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let received = handle.join().unwrap();
+    assert!(
+        received[0][0].starts_with("search_document: "),
+        "{received:?}"
+    );
+    // The model and the prefix come from embeddings.json; only the URL is from the environment.
+    assert_eq!(received[1], ["search_query: enable upload caching"]);
+    assert_eq!(received[2], ["search_query: enable upload caching"]);
+}
+
+#[test]
+fn the_config_file_sets_the_prefixes_and_a_flag_beats_it() {
+    let dir = workspace();
+    fs::write(
+        dir.path().join("kanon.yaml"),
+        "queries: queries.jsonl\ndoc_prefix: 'cfg-doc: '\nquery_prefix: 'cfg-query: '\n",
+    )
+    .unwrap();
+    let embed = |args: &[&str]| {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = std::thread::spawn(move || serve_embeddings(&listener));
+        let out = Command::new(env!("CARGO_BIN_EXE_kanon"))
+            .current_dir(dir.path())
+            .env("KANON_EMBED_URL", format!("http://{addr}"))
+            .args([
+                "--config",
+                "kanon.yaml",
+                "embed",
+                "--model",
+                "some-other-model",
+            ])
+            .args(args)
+            .output()
+            .unwrap();
+        let received = handle.join().unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let json: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(dir.path().join("embeddings.json")).unwrap())
+                .unwrap();
+        (received, json)
+    };
+    let (received, json) = embed(&[]);
+    assert!(received[0].starts_with("cfg-doc: "), "{received:?}");
+    assert_eq!(json["query_prefix"], "cfg-query: ");
+    let (received, json) = embed(&["--doc-prefix", "flag-doc: "]);
+    assert!(received[0].starts_with("flag-doc: "), "{received:?}");
+    assert_eq!(json["doc_prefix"], "flag-doc: ");
+    assert_eq!(
+        json["query_prefix"], "cfg-query: ",
+        "the other side still comes from the config"
+    );
+}

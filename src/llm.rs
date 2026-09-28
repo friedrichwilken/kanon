@@ -41,49 +41,87 @@ pub fn config_from_env(model_override: Option<String>) -> Result<LlmConfig, LlmE
     Ok(LlmConfig { url, key, model })
 }
 
-/// The first JSON value of type `T` in `text`: the whole text when it is one, else the first
-/// value that starts at a `[` or `{` and parses, so a fenced block (```` ```json ````), a
-/// sentence around the value, or a reasoning preamble does not hide it. Anything after the value
-/// is ignored. `None` when no such value exists.
+/// The longest reply [`extract_json`] searches for a value inside; a longer one has to be the
+/// value. Every `[` or `{` is a place to try, so the search is not free, and no answer to
+/// `grade` or `queries suggest` comes near this size.
+const MAX_SCAN: usize = 64 * 1024;
+
+/// Whether a JSON value says nothing: `null`, `{}`, `[]`, or an array of such. A value like
+/// that parses as almost any list of all-default records, so found inside prose it is not an
+/// answer.
+fn is_blank(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Null => true,
+        serde_json::Value::Object(fields) => fields.is_empty(),
+        serde_json::Value::Array(items) => items.iter().all(is_blank),
+        _ => false,
+    }
+}
+
+/// The JSON value of type `T` in `text`: the whole text when it is one (an empty list is a
+/// fine answer then), else the last value inside it that parses as `T`, so a fenced block
+/// (```` ```json ````), a sentence around the value, a reasoning preamble, or a format example
+/// the model echoed before its answer does not hide it. Blank values found inside prose
+/// (`[]`, `{}`) are not answers, a value nested in one already taken is not taken again, and
+/// text after the value is ignored. `None` when there is no such value.
 pub fn extract_json<T: DeserializeOwned>(text: &str) -> Option<T> {
     if let Ok(value) = serde_json::from_str(text.trim()) {
         return Some(value);
     }
-    text.char_indices()
-        .filter(|(_, c)| matches!(c, '[' | '{'))
-        .find_map(|(start, _)| {
-            serde_json::Deserializer::from_str(&text[start..])
-                .into_iter::<T>()
-                .next()?
-                .ok()
-        })
+    if text.len() > MAX_SCAN {
+        return None;
+    }
+    let mut found = None;
+    let mut resume = 0;
+    for (start, c) in text.char_indices() {
+        if start < resume || !matches!(c, '[' | '{') {
+            continue;
+        }
+        let mut values =
+            serde_json::Deserializer::from_str(&text[start..]).into_iter::<serde_json::Value>();
+        let Some(Ok(value)) = values.next() else {
+            continue;
+        };
+        if is_blank(&value) {
+            continue;
+        }
+        let end = start + values.byte_offset();
+        if let Ok(parsed) = serde_json::from_value::<T>(value) {
+            found = Some(parsed);
+            resume = end;
+        }
+    }
+    found
 }
 
 /// Ask the model for a JSON value of type `T` ([`pinakes::llm::chat`]) and read the reply
 /// leniently ([`extract_json`]). A reply with no such value is asked for once more with a
 /// stricter instruction added to `system`; if that one has none either, the error is the
-/// second reply's [`ChatError::Json`], raw text included. Any other error (HTTP, transport, a
-/// malformed completion) is returned at once: asking again would not change it.
+/// second reply's [`ChatError::Json`], raw text included. Any other error on the first request
+/// (HTTP, transport, a malformed completion) is returned at once: asking again would not change
+/// it. When the retry itself fails for another reason, the caller gets the first reply's
+/// [`ChatError::Json`], which is what was wrong with the answer, rather than a timeout on the
+/// second try, so a command that skips a page it cannot read skips this one too.
 pub fn chat_json<T: DeserializeOwned>(
     transport: &dyn ChatTransport,
     config: &LlmConfig,
     system: &str,
     user: &str,
 ) -> Result<T, ChatError> {
-    match llm::chat::<T>(transport, config, system, user) {
-        Err(ChatError::Json { raw, .. }) => {
-            if let Some(value) = extract_json(&raw) {
-                return Ok(value);
-            }
-        }
+    let first = match llm::chat::<T>(transport, config, system, user) {
+        Err(ChatError::Json { raw, source }) => match extract_json(&raw) {
+            Some(value) => return Ok(value),
+            None => ChatError::Json { raw, source },
+        },
         other => return other,
-    }
+    };
     let stricter = format!("{system}{STRICTER}");
     match llm::chat::<T>(transport, config, &stricter, user) {
         Err(ChatError::Json { raw, source }) => {
             extract_json(&raw).ok_or(ChatError::Json { raw, source })
         }
-        other => other,
+        Err(_) => Err(first),
+        ok => ok,
     }
 }
 
@@ -98,6 +136,13 @@ mod tests {
     struct Grade {
         id: String,
         grade: u8,
+    }
+
+    /// A record whose every field has a default, so it parses from any object.
+    #[derive(Debug, PartialEq, serde::Deserialize)]
+    struct Loose {
+        #[serde(default)]
+        query: String,
     }
 
     fn grades(text: &str) -> Option<Vec<Grade>> {
@@ -143,6 +188,52 @@ mod tests {
         );
         // Text after the value is ignored, whatever it holds.
         assert_eq!(grades(&format!("{bare} and [1, 2]")).unwrap(), one("a", 2));
+    }
+
+    #[test]
+    fn extract_json_does_not_take_a_blank_or_echoed_value_for_the_answer() {
+        let real = r#"[{"id": "a", "grade": 3}]"#;
+        // An empty list in the prose, and the format example the model repeated first.
+        assert_eq!(
+            grades(&format!("I will grade the [] candidates.\n{real}")).unwrap(),
+            one("a", 3)
+        );
+        assert_eq!(
+            grades(&format!(
+                r#"Format: [{{"id": "...", "grade": 0}}] Answer: {real}"#
+            ))
+            .unwrap(),
+            one("a", 3)
+        );
+        // Records whose fields all have defaults match anything; blank ones are not answers.
+        let loose: Vec<Loose> =
+            extract_json(r#"Refs [{}] then real [{"query": "x"}] done"#).unwrap();
+        assert_eq!(
+            loose,
+            [Loose {
+                query: "x".to_string()
+            }]
+        );
+        // A wrapper object around the list is looked through, and an empty list inside one is
+        // not an answer, so the reply is asked for again.
+        assert_eq!(
+            grades(&format!(r#"{{"grades": {real}}}"#)).unwrap(),
+            one("a", 3)
+        );
+        assert_eq!(grades(r#"{"grades": []}"#), None);
+        // An empty list is a fine answer when it is the whole reply.
+        assert_eq!(grades("[]").unwrap(), Vec::<Grade>::new());
+        assert_eq!(grades(" \n[]\n ").unwrap(), Vec::<Grade>::new());
+    }
+
+    #[test]
+    fn extract_json_does_not_search_a_reply_past_the_scan_limit() {
+        let value = r#"[{"id": "a", "grade": 1}]"#;
+        let long = format!("{}{value}", "x ".repeat(MAX_SCAN));
+        assert_eq!(grades(&long), None);
+        // The whole reply is still read at any size.
+        let padded = format!("{value}{}", " ".repeat(MAX_SCAN * 2));
+        assert_eq!(grades(&padded).unwrap(), one("a", 1));
     }
 
     #[test]
@@ -215,6 +306,31 @@ mod tests {
         ]);
         let got: Vec<Grade> = chat_json(&transport, &config(), "sys", "user").unwrap();
         assert_eq!(got, one("a", 0));
+    }
+
+    #[test]
+    fn a_retry_that_fails_for_another_reason_reports_the_first_reply() {
+        let transport = ScriptedTransport::new(vec![
+            Scripted::Ok(completion("the first, unusable reply")),
+            Scripted::Err(TransportError::Transport("timed out".to_string())),
+        ]);
+        let err = chat_json::<Vec<Grade>>(&transport, &config(), "sys", "user").unwrap_err();
+        assert!(
+            matches!(&err, ChatError::Json { raw, .. } if raw == "the first, unusable reply"),
+            "{err}"
+        );
+        assert_eq!(transport.requests.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn an_http_error_is_not_retried_either() {
+        let transport = ScriptedTransport::new(vec![Scripted::Err(TransportError::Status(
+            401,
+            "unauthorized".to_string(),
+        ))]);
+        let err = chat_json::<Vec<Grade>>(&transport, &config(), "sys", "user").unwrap_err();
+        assert!(matches!(err, ChatError::Http { status: 401, .. }), "{err}");
+        assert_eq!(transport.requests.lock().unwrap().len(), 1);
     }
 
     #[test]

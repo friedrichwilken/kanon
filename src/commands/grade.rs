@@ -6,10 +6,10 @@ use crate::backend::{self, BackendSpec};
 use crate::contracts;
 use crate::embed::Embedder;
 use crate::error::{CommandError, io_err};
-use crate::grade::{self, GradedRow, PageLookup};
+use crate::grade::{self, GradeError, GradedRow, PageLookup};
 use crate::workspace::Paths;
 use pinakes::index;
-use pinakes::llm::ChatTransport;
+use pinakes::llm::{ChatError, ChatTransport};
 use pinakes::manifest::now_rfc3339;
 
 use super::eval::backend_config;
@@ -44,6 +44,9 @@ pub struct GradeOutcome {
     pub rows: Vec<GradedRow>,
     /// Distinct queries replayed.
     pub queries: usize,
+    /// Queries skipped because the model's reply had no readable JSON even after the retry
+    /// (see [`crate::llm::chat_json`]); they have no rows.
+    pub failed: usize,
     /// The backend the candidates came from.
     pub backend: BackendSpec,
 }
@@ -78,16 +81,26 @@ pub fn grade(
     let k = options.k.unwrap_or(grade::DEFAULT_K);
     let at = now_rfc3339();
     let mut rows = Vec::new();
+    let mut asked = 0;
+    let mut failed = 0;
+    let mut first_failure = None;
     for query in &queries {
         let hits = backend.search(query, k, None)?;
         let candidates = lookup.candidates(&hits);
-        rows.extend(grade::grade_query(
-            transport,
-            &config,
-            query,
-            &candidates,
-            &at,
-        )?);
+        asked += usize::from(!candidates.is_empty());
+        match grade::grade_query(transport, &config, query, &candidates, &at) {
+            Ok(graded) => rows.extend(graded),
+            // A model that cannot answer in JSON for one query may for the next: skip it, count
+            // it, and stop only when it was every query asked (the model is then too small).
+            Err(err @ GradeError::Llm(ChatError::Json { .. })) => {
+                failed += 1;
+                first_failure.get_or_insert(err);
+            }
+            Err(err) => return Err(err.into()),
+        }
+    }
+    if let Some(err) = first_failure.filter(|_| failed == asked) {
+        return Err(err.into());
     }
     if let Some(path) = &options.out {
         std::fs::write(path, grade::to_jsonl(&rows)?).map_err(io_err(path))?;
@@ -95,6 +108,7 @@ pub fn grade(
     Ok(GradeOutcome {
         rows,
         queries: queries.len(),
+        failed,
         backend: options.backend.clone(),
     })
 }
@@ -292,6 +306,60 @@ mod tests {
                 "{err}"
             );
             assert!(transport.requests.lock().unwrap().is_empty());
+        });
+    }
+
+    #[test]
+    fn grade_skips_a_query_the_model_cannot_answer_in_json_and_says_so() {
+        let (dir, paths) = eval_workspace();
+        let trail_path = dir.path().join("trail.jsonl");
+        fs::write(
+            &trail_path,
+            "{\"at\": \"t\", \"query\": \"enable upload caching\"}\n\
+             {\"at\": \"t\", \"query\": \"storage bucket label\"}\n",
+        )
+        .unwrap();
+        let options = GradeOptions {
+            trail: trail_path,
+            model: Some("grader".to_string()),
+            ..GradeOptions::default()
+        };
+        let prose = || Scripted::Ok(completion("They all look relevant to me."));
+        let good = Scripted::Ok(completion(&format!(
+            r#"[{{"id": "{PAGE_ID}", "grade": 2}}]"#
+        )));
+        with_llm_url(|| {
+            // The first query is answered twice in prose (the retry too): skipped. The second
+            // is graded, and the run goes on.
+            let transport = ScriptedTransport::new(vec![prose(), prose(), good]);
+            let outcome = grade(&paths, &options, &transport).unwrap();
+            assert_eq!((outcome.queries, outcome.failed), (2, 1));
+            assert_eq!(outcome.rows.len(), 1);
+            assert_eq!(outcome.rows[0].query, "storage bucket label");
+
+            // Every query asked failing is the error: the model is too small for the job.
+            let transport = ScriptedTransport::new(vec![prose(), prose(), prose(), prose()]);
+            let err = grade(&paths, &options, &transport).unwrap_err();
+            assert!(
+                matches!(
+                    &err,
+                    CommandError::Grade(GradeError::Llm(ChatError::Json { .. }))
+                ),
+                "{err}"
+            );
+
+            // Any other model error still stops the run at once.
+            let transport = ScriptedTransport::new(vec![Scripted::Err(
+                pinakes::llm::TransportError::Status(401, "unauthorized".to_string()),
+            )]);
+            let err = grade(&paths, &options, &transport).unwrap_err();
+            assert!(
+                matches!(
+                    &err,
+                    CommandError::Grade(GradeError::Llm(ChatError::Http { .. }))
+                ),
+                "{err}"
+            );
         });
     }
 

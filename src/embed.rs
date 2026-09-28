@@ -319,10 +319,15 @@ const KNOWN_PREFIXES: &[(&str, &str, &str)] = &[
 const BGE_QUERY: &str = "Represent this sentence for searching relevant passages: ";
 
 /// The [`Prefixes`] a known model wants, `None` for any other model. `bge-m3`, hosted
-/// embedding APIs and the like want none and are deliberately not listed.
+/// embedding APIs, `-instruct` variants and the like want none, or something of their own, and
+/// are deliberately not listed.
 pub fn known_prefixes(model: &str) -> Option<Prefixes> {
     let name = model.rsplit('/').next().unwrap_or(model);
     let name = name.split(':').next().unwrap_or(name).to_lowercase();
+    // An `-instruct` variant takes a task instruction of its own, not its base model's prefix.
+    if name.contains("instruct") {
+        return None;
+    }
     KNOWN_PREFIXES
         .iter()
         .find(|(start, ..)| name.starts_with(start))
@@ -511,6 +516,7 @@ mod tests {
             "text-embedding-3-small",
             "bge-m3",
             "e5-mistral-7b-instruct",
+            "intfloat/multilingual-e5-large-instruct",
             "all-minilm",
             "fake",
             "",

@@ -10,6 +10,7 @@ use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::path::Path;
 
+use crate::cost::Cost;
 use crate::eval::{EvalSummary, Metrics, Split};
 use crate::history::{self, HistoryRow};
 use crate::svg::Charts;
@@ -92,6 +93,32 @@ fn eval_section(out: &mut String, before: Option<&EvalSummary>, after: Option<&E
         out.push_str("### Held-out queries\n\n");
         eval_table(out, holdout_before, holdout_after);
     }
+    let cost_before = before.and_then(|e| e.cost.as_ref());
+    let cost_after = after.and_then(|e| e.cost.as_ref());
+    if cost_before.is_some() || cost_after.is_some() {
+        out.push_str("### Cost\n\n");
+        cost_table(out, cost_before, cost_after);
+    }
+}
+
+/// What the searches cost, before and after: latency (which differs from run to run) and the
+/// tokens of the units returned per query.
+fn cost_table(out: &mut String, before: Option<&Cost>, after: Option<&Cost>) {
+    out.push_str(
+        "| | p50 ms | p95 ms | tokens@5 | tokens@10 |\n|---|---|---|---|---|\n| per query |",
+    );
+    let cell = |f: fn(&Cost) -> Option<f64>, precision: usize| {
+        let show = |cost: Option<&Cost>| {
+            cost.and_then(f)
+                .map_or_else(|| "–".to_string(), |v| format!("{v:.precision$}"))
+        };
+        format!(" {} → {} |", show(before), show(after))
+    };
+    out.push_str(&cell(|c| c.latency.map(|l| l.p50_ms), 1));
+    out.push_str(&cell(|c| c.latency.map(|l| l.p95_ms), 1));
+    out.push_str(&cell(|c| c.tokens.map(|t| t.mean5), 1));
+    out.push_str(&cell(|c| c.tokens.map(|t| t.mean10), 1));
+    out.push_str("\n\n");
 }
 
 fn eval_table(out: &mut String, before: Option<&Split>, after: Option<&Split>) {
@@ -174,6 +201,7 @@ mod tests {
             }),
             queries: vec![],
             backend: String::new(),
+            cost: None,
         };
         let after = EvalSummary {
             tuning: Split {
@@ -191,6 +219,7 @@ mod tests {
             }),
             queries: vec![],
             backend: "bm25".to_string(),
+            cost: None,
         };
         (before, after)
     }
@@ -239,6 +268,64 @@ mod tests {
         assert!(text.contains("_No evaluation results supplied._"));
         assert!(!text.contains("Backend"));
         snapshot("report_empty", &text);
+    }
+
+    #[test]
+    fn report_shows_the_cost_when_either_side_has_one() {
+        use crate::cost::{Latency, Tokens};
+
+        let (before, mut after) = evals();
+        assert!(
+            !render(ReportInput {
+                before: Some(&before),
+                after: Some(&after),
+                ..ReportInput::default()
+            })
+            .contains("### Cost")
+        );
+        after.cost = Some(Cost {
+            latency: Some(Latency {
+                p50_ms: 1.25,
+                p95_ms: 9.0,
+            }),
+            tokens: Some(Tokens {
+                mean5: 120.5,
+                mean10: 240.0,
+                unresolved: 0,
+            }),
+        });
+        let text = render(ReportInput {
+            before: Some(&before),
+            after: Some(&after),
+            ..ReportInput::default()
+        });
+        assert!(text.contains("### Cost"), "{text}");
+        assert!(
+            text.contains("| per query | – → 1.2 | – → 9.0 | – → 120.5 | – → 240.0 |"),
+            "{text}"
+        );
+        // Both sides measured: before → after in each cell.
+        let mut before = before;
+        before.cost = Some(Cost {
+            latency: Some(Latency {
+                p50_ms: 2.0,
+                p95_ms: 4.0,
+            }),
+            tokens: Some(Tokens {
+                mean5: 60.0,
+                mean10: 90.0,
+                unresolved: 0,
+            }),
+        });
+        let text = render(ReportInput {
+            before: Some(&before),
+            after: Some(&after),
+            ..ReportInput::default()
+        });
+        assert!(
+            text.contains("| per query | 2.0 → 1.2 | 4.0 → 9.0 | 60.0 → 120.5 | 90.0 → 240.0 |"),
+            "{text}"
+        );
     }
 
     #[test]

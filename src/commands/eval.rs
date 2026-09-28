@@ -7,6 +7,7 @@ use crate::backend::{self, Backend, BackendConfig, BackendError, BackendKind, Ba
 use crate::config::{
     Config, DEFAULT_K, DEFAULT_MAX_RECALL_DROP, GateMetric, NamedBackend, UnknownBackend,
 };
+use crate::cost::{Budget, BudgetCheck, CostMeter, UnitTokens};
 use crate::embed::{EmbedError, Embedder, HttpEmbedder};
 use crate::error::CommandError;
 use crate::eval::{self, Delta, EvalSummary, Gate};
@@ -41,6 +42,8 @@ pub struct EvalOptions {
     pub out: Option<PathBuf>,
     /// The run file's label; default: the git short SHA, else `run`.
     pub label: Option<String>,
+    /// Limits on the run's cost; one left unset takes the config's `max_p95_ms` / `max_tokens`.
+    pub budget: Budget,
 }
 
 /// The judge's rules for one run, from the options and the config: the gate tolerance and
@@ -50,6 +53,7 @@ struct Rules {
     max_drop: f64,
     gate_metric: GateMetric,
     negative_threshold: Option<f64>,
+    budget: Budget,
 }
 
 impl Rules {
@@ -57,6 +61,7 @@ impl Rules {
         eval_config: Option<&Config>,
         gate_metric: Option<GateMetric>,
         negative_threshold: Option<f64>,
+        budget: Budget,
     ) -> Rules {
         Rules {
             max_drop: eval_config.map_or(DEFAULT_MAX_RECALL_DROP, |e| e.max_recall_drop),
@@ -65,7 +70,20 @@ impl Rules {
                 .unwrap_or_default(),
             negative_threshold: negative_threshold
                 .or_else(|| eval_config.and_then(|e| e.negative_threshold)),
+            budget: Budget {
+                p95_ms: budget
+                    .p95_ms
+                    .or_else(|| eval_config.and_then(|e| e.max_p95_ms)),
+                tokens5: budget
+                    .tokens5
+                    .or_else(|| eval_config.and_then(|e| e.max_tokens)),
+            },
         }
+    }
+
+    /// The run's cost against the budget, one check per limit that is set.
+    fn budget(&self, summary: &EvalSummary) -> Vec<BudgetCheck> {
+        self.budget.check(summary.cost.as_ref())
     }
 
     fn gate(
@@ -100,6 +118,9 @@ pub struct EvalOutcome {
     pub gate: Option<Gate>,
     /// The delta when `--with`/`--without` was given.
     pub delta: Option<Delta>,
+    /// The cost budget's checks, one per limit set by `--max-p95-ms`, `--max-tokens` or the
+    /// config; empty without one.
+    pub budget: Vec<BudgetCheck>,
     /// The run file written when `--out` was given.
     pub run_file: Option<PathBuf>,
 }
@@ -132,7 +153,12 @@ pub fn eval(paths: &Paths, options: &EvalOptions) -> Result<EvalOutcome, Command
         .k
         .or_else(|| eval_config.map(|e| e.k))
         .unwrap_or(DEFAULT_K);
-    let rules = Rules::of(eval_config, options.gate_metric, options.negative_threshold);
+    let rules = Rules::of(
+        eval_config,
+        options.gate_metric,
+        options.negative_threshold,
+        options.budget,
+    );
     let priorities = settings.priorities;
     let queries = eval::load_queries(&queries_path)?;
     let artifact_version = artifact::manifest_artifact_version(&paths.artifact)?;
@@ -172,6 +198,7 @@ pub fn eval(paths: &Paths, options: &EvalOptions) -> Result<EvalOutcome, Command
         )?),
         None => None,
     };
+    let budget = rules.budget(&summary);
     Ok(EvalOutcome {
         summary,
         page_count,
@@ -179,6 +206,7 @@ pub fn eval(paths: &Paths, options: &EvalOptions) -> Result<EvalOutcome, Command
         k,
         gate,
         delta,
+        budget,
         run_file,
     })
 }
@@ -304,6 +332,8 @@ pub struct BackendEvalOptions {
     /// The run file's label; default: the git short SHA, else `run`. `eval --compare` suffixes
     /// it with `-<backend>`.
     pub label: Option<String>,
+    /// Limits on the run's cost; one left unset takes the config's `max_p95_ms` / `max_tokens`.
+    pub budget: Budget,
 }
 
 /// What `eval --backend` produced.
@@ -321,23 +351,36 @@ pub struct BackendEvalOutcome {
     pub gate: Option<Gate>,
     /// The delta when `--with`/`--without` was given.
     pub delta: Option<Delta>,
+    /// The cost budget's checks, one per limit set by `--max-p95-ms`, `--max-tokens` or the
+    /// config; empty without one.
+    pub budget: Vec<BudgetCheck>,
     /// The run file written when `--out` was given.
     pub run_file: Option<PathBuf>,
 }
 
-/// Run every query against `backend` with a result list of `k` pages.
+/// Run every query against `backend` with a result list of `k` pages, timing each search and
+/// counting the tokens of the units it returns (`units`).
 fn evaluate_backend(
     backend: &dyn Backend,
+    units: &UnitTokens,
     queries: &[eval::Query],
     k: usize,
     negative_threshold: Option<f64>,
 ) -> Result<EvalSummary, CommandError> {
+    let mut meter = CostMeter::new(units);
     let mut rows = Vec::with_capacity(queries.len());
     for query in queries {
-        let hits = backend.search(&query.query, k, None)?;
+        let hits = meter.search(|| backend.search(&query.query, k, None))?;
         rows.push(eval::QueryResult::of_hits(query, &hits, k));
     }
-    Ok(eval::summarise(rows, negative_threshold))
+    Ok(eval::summarise(rows, negative_threshold).with_cost(meter.finish()))
+}
+
+/// The token count of every unit of the artifact, for the cost of a backend's hits.
+fn unit_tokens(artifact: &Path, priorities: &Priorities) -> Result<UnitTokens, CommandError> {
+    let mut pages = index::load_pages(artifact, priorities)?;
+    index::mark_mirrors(&mut pages);
+    Ok(UnitTokens::of(&pages))
 }
 
 /// The [`BackendConfig`] for a command's backend, shared by `eval --backend` and `grade`:
@@ -380,7 +423,12 @@ pub fn eval_backend(
         .k
         .or_else(|| eval_config.map(|e| e.k))
         .unwrap_or(DEFAULT_K);
-    let rules = Rules::of(eval_config, options.gate_metric, options.negative_threshold);
+    let rules = Rules::of(
+        eval_config,
+        options.gate_metric,
+        options.negative_threshold,
+        options.budget,
+    );
     let priorities = settings.priorities;
     let queries = eval::load_queries(&queries_path)?;
     let artifact_version = artifact::manifest_artifact_version(&paths.artifact)?;
@@ -408,6 +456,7 @@ pub fn eval_backend(
             Some(delta),
         )
     } else {
+        let units = unit_tokens(&paths.artifact, &priorities)?;
         let config = backend_config(
             paths,
             priorities,
@@ -416,8 +465,14 @@ pub fn eval_backend(
             options.embedder.clone(),
         );
         let built = backend::build(options.backend.kind, &paths.artifact, &config)?;
-        let summary = evaluate_backend(built.as_ref(), &queries, k, rules.negative_threshold)?
-            .with_backend(&options.backend.name);
+        let summary = evaluate_backend(
+            built.as_ref(),
+            &units,
+            &queries,
+            k,
+            rules.negative_threshold,
+        )?
+        .with_backend(&options.backend.name);
         (summary, built.page_count(), built.searchable_count(), None)
     };
 
@@ -437,6 +492,7 @@ pub fn eval_backend(
         )?),
         None => None,
     };
+    let budget = rules.budget(&summary);
     Ok(BackendEvalOutcome {
         summary,
         page_count,
@@ -444,6 +500,7 @@ pub fn eval_backend(
         k,
         gate,
         delta,
+        budget,
         run_file,
     })
 }
@@ -619,6 +676,8 @@ pub struct EvalFlags {
     pub out: Option<PathBuf>,
     /// `--label`.
     pub label: Option<String>,
+    /// `--max-p95-ms`, `--max-tokens`.
+    pub budget: Budget,
 }
 
 /// Fill the config's defaults (`backend`, `backend_url`, `embeddings`, `compare`)
@@ -702,6 +761,7 @@ pub fn eval_plan(flags: EvalFlags) -> Result<EvalPlan, CommandError> {
             embedder: None,
             out: flags.out,
             label: flags.label,
+            budget: flags.budget,
         };
         return Ok(EvalPlan::Compare {
             backends,
@@ -721,6 +781,7 @@ pub fn eval_plan(flags: EvalFlags) -> Result<EvalPlan, CommandError> {
             negative_threshold: flags.negative_threshold,
             out: flags.out,
             label: flags.label,
+            budget: flags.budget,
         }));
     }
     let backend = flags.backend.spec()?;
@@ -738,6 +799,7 @@ pub fn eval_plan(flags: EvalFlags) -> Result<EvalPlan, CommandError> {
         embedder: None,
         out: flags.out,
         label: flags.label,
+        budget: flags.budget,
     }))
 }
 

@@ -36,7 +36,11 @@ returned, with the unit that matched when it says so). Units and their ids come 
 artifact's `manifest.json` through `pinakes::manifest::Manifest::load`, the one place the
 artifact contract version is checked on kanon's side; pages come from
 `pinakes::corpus::load_pages`. Never define a struct for `manifest.json` or `meta.json`, and
-never parse them by hand: a newer `artifact_version` would pass unnoticed.
+never parse them by hand: a newer `artifact_version` would pass unnoticed. `cost` times every
+search of a run and counts the tokens of the units it returned (with the index's tokeniser),
+and holds the optional budget on either; it sits on pinakes and `hit` alone. Latency differs
+from run to run, so nothing may compare it exactly: a test that pins a result strips it with
+`EvalSummary::without_latency`.
 
 **Measuring:** `eval` (the judge, the metrics, the result file); `embed` (the embeddings file
 pair and the `Embedder` trait); `backend` (the `Backend` trait and `bm25`, `tantivy`, `dense`,

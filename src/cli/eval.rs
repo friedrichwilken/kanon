@@ -9,6 +9,7 @@ use kanon::backend::BackendSpec;
 use kanon::commands::{
     self, BackendEvalOptions, BackendFlags, EvalFlags, EvalOptions, EvalPlan, Paths,
 };
+use kanon::cost::{Budget, BudgetCheck};
 use kanon::eval::{self, GateMetric};
 
 use crate::cli::EXIT_GATE;
@@ -44,6 +45,15 @@ pub(crate) struct EvalArgs {
     /// this; without it, only an empty result list rejects.
     #[arg(long, value_name = "SCORE")]
     negative_threshold: Option<f64>,
+    /// Exit 2 when a backend's 95th percentile search latency exceeds this many milliseconds
+    /// (default: `max_p95_ms` from the config). An absolute ceiling, not a comparison with a
+    /// baseline: set it with room to spare, latency varies from run to run.
+    #[arg(long, value_name = "MS", value_parser = parse_limit)]
+    max_p95_ms: Option<f64>,
+    /// Exit 2 when the mean tokens per query of a backend's top 5 hits exceeds this (default:
+    /// `max_tokens` from the config). Tokens are counted with the index's tokeniser.
+    #[arg(long, value_name = "N", value_parser = parse_limit)]
+    max_tokens: Option<f64>,
     /// Retriever backend to measure: bm25 (default), bm25-tantivy, dense, hybrid, external or
     /// a name from the config's `backends`.
     #[arg(long, value_name = "NAME")]
@@ -97,6 +107,22 @@ fn eval_flags(args: EvalArgs) -> EvalFlags {
         compare: args.compare,
         out: args.out,
         label: args.label,
+        budget: Budget {
+            p95_ms: args.max_p95_ms,
+            tokens5: args.max_tokens,
+        },
+    }
+}
+
+/// A cost limit: a finite number, zero or more.
+fn parse_limit(text: &str) -> Result<f64, String> {
+    let value: f64 = text
+        .parse()
+        .map_err(|_| format!("{text:?} is not a number"))?;
+    if value.is_finite() && value >= 0.0 {
+        Ok(value)
+    } else {
+        Err(format!("{text:?} is not a finite number, zero or more"))
     }
 }
 
@@ -148,6 +174,7 @@ fn run_eval_plain(paths: &Paths, options: &EvalOptions) -> Result<ExitCode> {
     if let Some(path) = &outcome.run_file {
         eprintln!("wrote {}", path.display());
     }
+    let mut failed = false;
     if let Some(gate) = outcome.gate {
         warn_unset_baseline(&gate);
         let verdict = if gate.passed() { "ok" } else { "FAILED" };
@@ -159,11 +186,19 @@ fn run_eval_plain(paths: &Paths, options: &EvalOptions) -> Result<ExitCode> {
             gate.drop(),
             gate.max_drop
         );
-        if !gate.passed() {
-            return Ok(ExitCode::from(EXIT_GATE));
-        }
+        failed |= !gate.passed();
     }
-    Ok(ExitCode::SUCCESS)
+    failed |= !print_budget(None, &outcome.budget);
+    Ok(exit_code(failed))
+}
+
+/// Exit 2 when a gate failed, else 0.
+fn exit_code(failed: bool) -> ExitCode {
+    if failed {
+        ExitCode::from(EXIT_GATE)
+    } else {
+        ExitCode::SUCCESS
+    }
 }
 
 /// `eval --backend NAME` (or any backend-only flag without `--compare`): through
@@ -193,13 +228,13 @@ fn run_eval_with_backend(paths: &Paths, options: &BackendEvalOptions) -> Result<
     if let Some(path) = &outcome.run_file {
         eprintln!("wrote {}", path.display());
     }
+    let mut failed = false;
     if let Some(gate) = outcome.gate {
         print_gate(backend, &gate);
-        if !gate.passed() {
-            return Ok(ExitCode::from(EXIT_GATE));
-        }
+        failed |= !gate.passed();
     }
-    Ok(ExitCode::SUCCESS)
+    failed |= !print_budget(Some(backend), &outcome.budget);
+    Ok(exit_code(failed))
 }
 
 /// `eval --compare a,b,c`: one table per backend on the same query set, one combined JSON
@@ -230,6 +265,7 @@ fn run_eval_compare(
             print_gate(backend, gate);
             failed_gate |= !gate.passed();
         }
+        failed_gate |= !print_budget(Some(backend), &outcome.budget);
         combined.insert(
             backend.name.clone(),
             serde_json::to_value(&outcome.summary).context("serialising the result")?,
@@ -243,11 +279,7 @@ fn run_eval_compare(
     } else {
         std::io::stdout().lock().write_all(text.as_bytes())?;
     }
-    Ok(if failed_gate {
-        ExitCode::from(EXIT_GATE)
-    } else {
-        ExitCode::SUCCESS
-    })
+    Ok(exit_code(failed_gate))
 }
 
 fn print_eval_outcome(
@@ -279,6 +311,24 @@ fn warn_unset_baseline(gate: &eval::Gate) {
             gate.metric.label()
         );
     }
+}
+
+/// Print one line per cost limit that is set; whether they all held. `backend` names the
+/// backend when the run has several (or a chosen one).
+fn print_budget(backend: Option<&BackendSpec>, checks: &[BudgetCheck]) -> bool {
+    let tag = backend.map_or_else(String::new, |backend| format!(" [{backend}]"));
+    for check in checks {
+        let value = check
+            .value
+            .map_or_else(|| "n/a".to_string(), |value| format!("{value:.1}"));
+        let verdict = if check.passed() { "ok" } else { "FAILED" };
+        eprintln!(
+            "budget{tag}: {} {value}, max {:.1}: {verdict}",
+            check.kind.label(),
+            check.max
+        );
+    }
+    checks.iter().all(BudgetCheck::passed)
 }
 
 fn print_gate(backend: &BackendSpec, gate: &eval::Gate) {

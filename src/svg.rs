@@ -834,6 +834,7 @@ mod tests {
                 query("dropped", 1.0 / 3.0),
             ],
             backend: String::new(),
+            cost: None,
         };
         let after = EvalSummary {
             tuning: Split {
@@ -857,6 +858,7 @@ mod tests {
                 query("added", 1.0 / 4.0),
             ],
             backend: "bm25".to_string(),
+            cost: None,
         };
         (before, after)
     }

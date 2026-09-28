@@ -285,6 +285,15 @@ pub struct Config {
     /// side cannot differ from the document side.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub query_prefix: Option<String>,
+    /// `eval` exits 2 when a backend's 95th percentile search latency, in milliseconds, exceeds
+    /// this; `--max-p95-ms` overrides it. An absolute ceiling, so set it with room to spare:
+    /// latency varies from run to run and machine to machine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_p95_ms: Option<f64>,
+    /// `eval` exits 2 when the mean tokens per query of a backend's top 5 hits exceeds this;
+    /// `--max-tokens` overrides it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<f64>,
     /// Backends a bare `eval` compares over the same query set, one table each; when set it
     /// wins over `backend`. `--compare` or `--backend` on the command line overrides it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

@@ -74,7 +74,7 @@ fn dense_and_hybrid_metrics_on_the_golden_corpus_are_pinned() {
             "pages": dense.page_count,
             "searchable": dense.searchable_count,
             "k": dense.k,
-            "eval": serde_json::to_value(&dense.summary).unwrap(),
+            "eval": serde_json::to_value(dense.summary.clone().without_latency()).unwrap(),
         }),
     );
     assert_eq!(dense.summary.backend, "dense");
@@ -95,7 +95,7 @@ fn dense_and_hybrid_metrics_on_the_golden_corpus_are_pinned() {
             "pages": hybrid.page_count,
             "searchable": hybrid.searchable_count,
             "k": hybrid.k,
-            "eval": serde_json::to_value(&hybrid.summary).unwrap(),
+            "eval": serde_json::to_value(hybrid.summary.clone().without_latency()).unwrap(),
         }),
     );
     assert_eq!(hybrid.summary.backend, "hybrid");

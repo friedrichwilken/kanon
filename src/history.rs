@@ -247,6 +247,13 @@ pub struct HistoryRow {
     pub k: Option<usize>,
     /// When the run was written, RFC 3339 UTC.
     pub at: Option<String>,
+    /// The run's 95th percentile search latency in milliseconds; `None` for a result written
+    /// before cost was measured.
+    #[serde(default)]
+    pub p95_ms: Option<f64>,
+    /// The run's mean tokens per query over the top 5 hits; `None` like `p95_ms`.
+    #[serde(default)]
+    pub tokens5: Option<f64>,
 }
 
 impl HistoryRow {
@@ -272,6 +279,8 @@ impl HistoryRow {
             queries_sha256: info.map(|i| i.queries_sha256.clone()),
             k: info.map(|i| i.k),
             at: info.map(|i| i.at.clone()),
+            p95_ms: run.summary.cost.and_then(|c| c.latency).map(|l| l.p95_ms),
+            tokens5: run.summary.cost.and_then(|c| c.tokens).map(|t| t.mean5),
         }
     }
 }
@@ -289,8 +298,9 @@ pub fn read_history(dir: &Path) -> Result<Vec<HistoryRow>, HistoryError> {
 pub fn render_table(rows: &[HistoryRow]) -> String {
     let mut out = String::from(
         "| # | label | backend | tuning recall@5 | recall@10 | MRR | nDCG@5 | nDCG@10 | n \
-         | held-out recall@5 | recall@10 | MRR | nDCG@5 | nDCG@10 | n | manifest | at |\n\
-         |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n",
+         | held-out recall@5 | recall@10 | MRR | nDCG@5 | nDCG@10 | n | p95 ms | tokens@5 \
+         | manifest | at |\n\
+         |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n",
     );
     for row in rows {
         let dash = || "–".to_string();
@@ -301,6 +311,9 @@ pub fn render_table(rows: &[HistoryRow]) -> String {
         let n = |m: Option<&Metrics>| m.map_or_else(dash, |m| m.n.to_string());
         let tuning = Some(&row.tuning);
         let holdout = row.holdout.as_ref();
+        let cost = |value: Option<f64>, precision: usize| {
+            value.map_or_else(dash, |value| format!("{value:.precision$}"))
+        };
         let manifest = row
             .manifest_sha256
             .as_deref()
@@ -308,7 +321,7 @@ pub fn render_table(rows: &[HistoryRow]) -> String {
         let _ = writeln!(
             out,
             "| {:03} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} \
-             | {manifest} | {} |",
+             | {} | {} | {manifest} | {} |",
             row.seq,
             text(row.label.as_ref()),
             text(row.backend.as_ref()),
@@ -324,6 +337,8 @@ pub fn render_table(rows: &[HistoryRow]) -> String {
             metric(holdout, |m| m.ndcg5),
             metric(holdout, |m| m.ndcg10),
             n(holdout),
+            cost(row.p95_ms, 1),
+            cost(row.tokens5, 1),
             text(row.at.as_ref()),
         );
     }
@@ -336,6 +351,7 @@ mod tests {
     use std::fs;
 
     use super::*;
+    use crate::cost::{Cost, Latency, Tokens};
     use crate::eval::Split;
 
     fn metrics(r5: f64, r10: f64, mrr: f64, n: usize) -> Metrics {
@@ -363,6 +379,7 @@ mod tests {
             }),
             queries: vec![],
             backend: "bm25".to_string(),
+            cost: None,
         }
     }
 
@@ -509,7 +526,20 @@ mod tests {
     fn history_rows_with_and_without_the_run_object() {
         let dir = tempfile::tempdir().unwrap();
         let run = Run {
-            summary: summary(true),
+            summary: EvalSummary {
+                cost: Some(Cost {
+                    latency: Some(Latency {
+                        p50_ms: 2.0,
+                        p95_ms: 12.34,
+                    }),
+                    tokens: Some(Tokens {
+                        mean5: 56.7,
+                        mean10: 70.0,
+                        unresolved: 0,
+                    }),
+                }),
+                ..summary(true)
+            },
             run: Some(info("first")),
         };
         write_run(dir.path(), &run).unwrap();
@@ -520,6 +550,7 @@ mod tests {
         // A plain result with no backend at all.
         EvalSummary {
             backend: String::new(),
+            cost: None,
             ..summary(false)
         }
         .save(&dir.path().join("003-legacy.json"))
@@ -534,11 +565,18 @@ mod tests {
         assert_eq!(rows[0].backend.as_deref(), Some("bm25"));
         assert_eq!(rows[0].k, Some(10));
         assert!(rows[0].holdout.is_some());
+        assert_eq!(rows[0].p95_ms, Some(12.34));
+        assert_eq!(rows[0].tokens5, Some(56.7));
         assert_eq!(rows[1].seq, 2);
         assert_eq!(rows[1].label, None);
         assert_eq!(rows[1].backend.as_deref(), Some("bm25"), "from the result");
         assert_eq!(rows[1].manifest_sha256, None);
         assert_eq!(rows[1].holdout, None);
+        assert_eq!(
+            (rows[1].p95_ms, rows[1].tokens5),
+            (None, None),
+            "a result with no cost"
+        );
         assert_eq!(rows[2].backend, None);
 
         let table = render_table(&rows);
@@ -546,14 +584,15 @@ mod tests {
         assert!(
             table.contains(
                 "| 001 | first | bm25 | 0.800 | 0.850 | 0.660 | 0.640 | 0.680 | 40 \
-                 | 0.700 | 0.800 | 0.600 | 0.580 | 0.620 | 10 | abababab | 2026-09-16T12:00:00Z |"
+                 | 0.700 | 0.800 | 0.600 | 0.580 | 0.620 | 10 | 12.3 | 56.7 | abababab \
+                 | 2026-09-16T12:00:00Z |"
             ),
             "{table}"
         );
         assert!(
             table.contains(
                 "| 002 | – | bm25 | 0.800 | 0.850 | 0.660 | 0.640 | 0.680 | 40 \
-                 | – | – | – | – | – | – | – | – |"
+                 | – | – | – | – | – | – | – | – | – | – |"
             ),
             "{table}"
         );

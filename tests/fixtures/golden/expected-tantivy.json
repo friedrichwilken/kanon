@@ -1,6 +1,13 @@
 {
   "eval": {
     "backend": "bm25-tantivy",
+    "cost": {
+      "tokens": {
+        "mean@10": 68.4,
+        "mean@5": 56.86666666666667,
+        "unresolved": 0
+      }
+    },
     "holdout": {
       "overall": {
         "mrr": 1.0,

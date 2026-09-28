@@ -32,6 +32,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::cost::{Cost, CostMeter, UnitTokens};
 use crate::hit::Hit;
 use crate::num::float;
 use pinakes::index::{Index, IndexError};
@@ -450,9 +451,31 @@ pub struct EvalSummary {
     /// selection; only `eval --backend`/`--compare` set it.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub backend: String,
+    /// What the searches cost: latency and tokens per query (see [`crate::cost`]). Absent in a
+    /// result written before it existed. Latency differs from run to run, so it is never
+    /// something to compare exactly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost: Option<Cost>,
 }
 
 impl EvalSummary {
+    /// Record what the searches cost.
+    #[must_use]
+    pub fn with_cost(mut self, cost: Option<Cost>) -> EvalSummary {
+        self.cost = cost;
+        self
+    }
+
+    /// The result without its search latency, for a test that pins it exactly: latency differs
+    /// from run to run, the tokens and everything else do not.
+    #[must_use]
+    pub fn without_latency(mut self) -> EvalSummary {
+        if let Some(cost) = &mut self.cost {
+            cost.latency = None;
+        }
+        self
+    }
+
     /// Record which backend produced this result.
     #[must_use]
     pub fn with_backend(mut self, name: &str) -> EvalSummary {
@@ -501,16 +524,22 @@ pub fn evaluate(
     k: usize,
     negative_threshold: Option<f64>,
 ) -> Result<EvalSummary, EvalError> {
+    let units = UnitTokens::of(index.pages());
+    let mut meter = CostMeter::new(&units);
     let mut rows = Vec::with_capacity(queries.len());
     for query in queries {
-        let hits: Vec<Hit> = index
-            .search(&query.query, k, None)?
-            .into_iter()
-            .map(Hit::from)
-            .collect();
+        let hits = meter.search(|| {
+            Ok::<_, EvalError>(
+                index
+                    .search(&query.query, k, None)?
+                    .into_iter()
+                    .map(Hit::from)
+                    .collect(),
+            )
+        })?;
         rows.push(QueryResult::of_hits(query, &hits, k));
     }
-    Ok(summarise(rows, negative_threshold))
+    Ok(summarise(rows, negative_threshold).with_cost(meter.finish()))
 }
 
 /// Fold per-query rows into tuning and held-out splits. A negative row counts as rejected when
@@ -523,6 +552,7 @@ pub fn summarise(rows: Vec<QueryResult>, negative_threshold: Option<f64>) -> Eva
         holdout: (!holdout.is_empty()).then(|| Split::of(&holdout, negative_threshold)),
         queries: rows,
         backend: String::new(),
+        cost: None,
     }
 }
 
@@ -676,6 +706,10 @@ pub fn render_table(summary: &EvalSummary) -> String {
     }
     if let Some(negative) = summary.holdout.as_ref().and_then(|s| s.negative.as_ref()) {
         negative_line(&mut out, "held-out", negative);
+    }
+    if let Some(cost) = &summary.cost {
+        out.push_str(&cost.render());
+        out.push('\n');
     }
     out
 }

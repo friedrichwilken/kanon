@@ -123,6 +123,25 @@ run measured) and the time inside. `kanon history` lists those runs as a
 Markdown table (`--json OUT` for the rows as JSON), and `report --runs runs/` adds the same
 table as a History section. Commit the directory and the numbers have a series.
 
+`eval` also says what the searches cost, on a line under the table and as `cost` in the result:
+the median and 95th percentile time of a search, and the mean tokens per query of the units the
+top 5 and top 10 hits name (`tokens@5`, `tokens@10`). A retriever that doubles recall by
+returning whole sections may lose on both. Tokens are counted with the reference index's own
+tokeniser over the unit's text, so they are roughly words, not a model's tokens: they compare
+retrievers with each other and a corpus with itself over time, and are not a bill. Latency is the
+wall-clock time of the search call, so for `dense`, `hybrid` and `external` it includes the
+network round trip; it comes from one run and differs from the next, so read the series
+(`--out runs/`; `kanon history` shows `p95 ms` and `tokens@5` beside the quality columns, and
+`report` a Cost table before and after), not one number. A hit whose unit the artifact does not
+have, as when an `external` backend names other pages, counts no tokens and is reported as "not
+counted".
+
+Two optional budgets gate the cost: `eval --max-p95-ms MS` and `--max-tokens N` (config
+`max_p95_ms` and `max_tokens`) exit 2 when a backend's 95th percentile latency, or its mean
+tokens@5, is over the ceiling. They are absolute ceilings, not comparisons with a baseline,
+because latency is too noisy to compare: set them with room to spare. They combine with
+`--gate`, which compares recall with a baseline, and a run fails if either does.
+
 `report --svg DIR` also writes the facts that decide a review as charts, linked from the
 report: recall, MRR and nDCG@5 over the runs (tuning solid, held-out dashed), the rank of each
 query's first expected hit before and after, and recall@5 per kind with tuning next to

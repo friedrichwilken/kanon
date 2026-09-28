@@ -40,6 +40,22 @@ fn ok(out: &std::process::Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
+/// The cells of a history row whose run measured its cost: 19 columns, the two cost columns
+/// (`p95 ms`, `tokens@5`) holding numbers, whatever they are, since latency differs every run.
+fn cells_with_cost(row: &str) -> Vec<&str> {
+    let cells: Vec<&str> = row.split('|').map(str::trim).collect();
+    assert_eq!(cells.len(), 21, "19 columns between the outer bars: {row}");
+    assert!(
+        cells[16].parse::<f64>().is_ok_and(|ms| ms >= 0.0),
+        "p95 ms: {row}"
+    );
+    assert!(
+        cells[17].parse::<f64>().is_ok_and(|t| t > 0.0),
+        "tokens@5: {row}"
+    );
+    cells
+}
+
 #[test]
 fn eval_out_numbers_run_files_and_history_lists_them() {
     let dir = workspace();
@@ -132,10 +148,12 @@ fn eval_out_numbers_run_files_and_history_lists_them() {
     assert!(
         lines[2].starts_with(
             "| 001 | before-curation | bm25 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 1 \
-             | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 1 | none | "
+             | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 1 | "
         ),
         "{table}"
     );
+    // The manifest follows the two cost columns.
+    assert_eq!(cells_with_cost(lines[2])[18], "none", "{table}");
     assert!(
         lines[3].starts_with("| 002 | tantivy | bm25-tantivy | 1.000 |"),
         "{table}"
@@ -222,13 +240,17 @@ fn history_json_report_runs_and_odd_files() {
     let out = kanon(root, &["history", "--runs", "runs"]);
     ok(&out);
     let table = String::from_utf8_lossy(&out.stdout);
+    let plain = table.lines().find(|l| l.starts_with("| 003 ")).unwrap();
     assert!(
-        table.contains(
+        plain.starts_with(
             "| 003 | – | – | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 1 \
-             | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 1 | – | – |"
+             | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 1 | "
         ),
         "{table}"
     );
+    // A plain result has no run object (no manifest, no time), but it does carry its cost.
+    assert!(plain.ends_with("| – | – |"), "{table}");
+    cells_with_cost(plain);
     fs::write(root.join("runs/004-broken.json"), "not json").unwrap();
     let out = kanon(root, &["history", "--runs", "runs"]);
     assert_eq!(out.status.code(), Some(1));

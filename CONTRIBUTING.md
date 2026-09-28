@@ -33,4 +33,7 @@ regenerated files and follow the version rule in
 ## Pull requests
 
 One change per pull request, with the commit body saying why. CI runs the lint and test gates
-above on Linux and macOS, plus a build on the minimum supported Rust version.
+above on Linux and macOS, plus a build on the minimum supported Rust version, and `cargo audit`
+against the RustSec advisories (`just audit`). An advisory that cannot be fixed yet is ignored in
+[`.cargo/audit.toml`](.cargo/audit.toml), with the reason it does not apply and the condition for
+deleting the entry; there is no other place to silence one.

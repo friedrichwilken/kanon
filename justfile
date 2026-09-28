@@ -52,6 +52,6 @@ check-local-models:
     cargo build --release --locked
     KANON=target/release/kanon examples/local-models/check.sh
 
-# RustSec advisories against Cargo.lock (needs `cargo install cargo-audit`).
+# RustSec advisories against Cargo.lock (needs `cargo install cargo-audit`); .cargo/audit.toml lists the ignored ones, each with its reason and exit condition.
 audit:
     cargo audit

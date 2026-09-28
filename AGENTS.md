@@ -30,7 +30,11 @@ belongs in git: a query set, a run, a gate, a report.
 the unit, the readers that check a document's version, and the source of the JSON Schemas
 under `docs/schemas/`); it sits on pinakes alone, as does `hit` (the page a retriever
 returned, with the unit that matched when it says so). Units and their ids come from
-`pinakes::chunks`; nothing here cuts a page or numbers a unit itself.
+`pinakes::chunks`; nothing here cuts a page or numbers a unit itself. `artifact` reads the
+artifact's `manifest.json` through `pinakes::manifest::Manifest::load`, the one place the
+artifact contract version is checked on kanon's side; pages come from
+`pinakes::corpus::load_pages`. Never define a struct for `manifest.json` or `meta.json`, and
+never parse them by hand: a newer `artifact_version` would pass unnoticed.
 
 **Measuring:** `eval` (the judge, the metrics, the result file); `embed` (the embeddings file
 pair and the `Embedder` trait); `backend` (the `Backend` trait and `bm25`, `tantivy`, `dense`,

@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use crate::artifact;
 use crate::embed::{self, Embedder};
 use crate::error::CommandError;
 use crate::workspace::Paths;
@@ -46,6 +47,9 @@ pub fn embed(
     embedder: &dyn Embedder,
 ) -> Result<EmbedOutcome, CommandError> {
     let priorities = settings(paths)?.priorities;
+    // The manifest is hashed below, so it is read through the loader first: a manifest of a
+    // newer artifact contract stops the run before any text is embedded.
+    artifact::manifest_artifact_version(&paths.artifact)?;
     let mut pages = index::load_pages(&paths.artifact, &priorities)?;
     index::mark_mirrors(&mut pages);
     let units = index::iter_units(&pages);

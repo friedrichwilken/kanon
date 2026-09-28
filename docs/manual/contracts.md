@@ -107,6 +107,42 @@ heading, with an empty `heading`. `text` is the title, heading and body joined a
 without exchanging the text. Pages a higher-priority source mirrors are not searchable and
 yield no units.
 
+## The artifact
+
+The artifact directory is pinakes's contract, not kanon's: `kanon` defines no type for
+`manifest.json` or a source's `meta.json` and reads them only through pinakes
+(`load_pages`, `Manifest::load`). For a consumer in another language, the shape of
+`manifest.json` is pinakes's `docs/schemas/manifest.schema.json`.
+
+The contract carries one integer, `artifact_version`, in `manifest.json` and in every
+`meta.json`; a missing one means 1. A reader accepts an equal or lower version and rejects a
+higher one, and `kanon` passes pinakes's one line on unchanged, with the file it came from:
+
+```text
+artifact/manifest.json: artifact version 2 is newer than this pinakes supports (1); upgrade pinakes
+```
+
+Every command that loads the artifact's pages (`eval` in all its forms, `grade`, `embed` and
+`queries suggest`) goes through `load_pages`, so a newer `meta.json` stops it. Each of them
+also reads the artifact's own `manifest.json` through `Manifest::load`, so a newer manifest
+stops it too, before any query, embedding or model call is made. `queries add`, `queries check`
+and `queries import` read the workspace's committed manifest through the same loader. An
+artifact whose `manifest.json` is present but not a manifest at all fails those commands with
+the loader's error rather than being measured or hashed anyway; an artifact with no manifest is
+measured as before.
+
+One limit is pinakes's, not kanon's. `Manifest::load` parses the typed manifest first and
+compares the version afterwards, so a manifest of a newer major that also removed or renamed a
+field kanon needs is reported as `invalid manifest: missing field ...` (a `version` other than
+1 as `unsupported manifest version`), not with the line above. `meta.json` has no such gap: its
+version is read before anything else. `kanon` cannot close this gap without parsing the file
+itself, which it does not do.
+
+A run file records the version it measured as `run.artifact_version`, next to
+`manifest_sha256`, so a series says which contract each number came from. It is absent when the
+artifact has no manifest, and in run files written before the field existed; `kanon history
+--json` shows it per row as `artifact_version`, `null` when absent.
+
 ## Keeping the schemas honest
 
 `tests/schemas.rs` generates the schemas from the types and fails when the committed files

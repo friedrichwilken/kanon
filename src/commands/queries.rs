@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use crate::artifact;
 use crate::error::{CommandError, io_err};
 use crate::eval;
 use crate::grade::GradedRow;
@@ -167,6 +168,7 @@ pub fn queries_suggest(
         std::fs::create_dir_all(dir).map_err(io_err(dir))?;
     }
     let priorities = settings(paths)?.priorities;
+    artifact::manifest_artifact_version(&paths.artifact)?;
     let mut pages = index::load_pages(&paths.artifact, &priorities)?;
     index::mark_mirrors(&mut pages);
     let sampled = suggest::sample(&pages, options.n, options.per_source, options.seed);
@@ -340,6 +342,41 @@ mod tests {
         let loaded = eval::load_queries(&queries_path).unwrap();
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].expected, ["handbook::docs/a.md"]);
+    }
+
+    #[test]
+    fn queries_suggest_refuses_a_manifest_of_a_newer_artifact_contract_before_the_model() {
+        use crate::testing::with_llm_url;
+        use pinakes::llm::testing::ScriptedTransport;
+
+        let (dir, paths) = eval_workspace();
+        fs::write(
+            paths.artifact.join("manifest.json"),
+            r#"{"version": 1, "artifact_version": 2, "generated_at": "t", "sources": {}}"#,
+        )
+        .unwrap();
+        let options = QueriesSuggestOptions {
+            n: 10,
+            per_source: None,
+            out: dir.path().join("suggestions.jsonl"),
+            model: Some("suggest-model".to_string()),
+            seed: 0,
+        };
+        with_llm_url(|| {
+            let transport = ScriptedTransport::new(vec![]);
+            let err = queries_suggest(&paths, &options, &transport).unwrap_err();
+            assert!(
+                matches!(
+                    &err,
+                    CommandError::Manifest(
+                        pinakes::manifest::ManifestError::ArtifactVersion { .. }
+                    )
+                ),
+                "{err}"
+            );
+            assert!(transport.requests.lock().unwrap().is_empty());
+        });
+        assert!(!options.out.exists());
     }
 
     #[test]

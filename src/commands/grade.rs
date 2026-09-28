@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::rc::Rc;
 
+use crate::artifact;
 use crate::backend::{self, BackendSpec};
 use crate::contracts;
 use crate::embed::Embedder;
@@ -60,6 +61,9 @@ pub fn grade(
     let entries = contracts::read_trail(&options.trail)?;
     let queries = grade::distinct_queries(&entries);
     let priorities = settings(paths)?.priorities;
+    // A manifest of a newer artifact contract stops the run before the backend or the model is
+    // asked anything.
+    artifact::manifest_artifact_version(&paths.artifact)?;
     let mut pages = index::load_pages(&paths.artifact, &priorities)?;
     index::mark_mirrors(&mut pages);
     let lookup = PageLookup::new(&pages);
@@ -258,6 +262,36 @@ mod tests {
             assert_eq!(candidates[0]["excerpt"], "");
             assert_eq!(candidates[1]["id"], PAGE_ID);
             assert_eq!(candidates[1]["title"], "Storage Module");
+        });
+    }
+
+    #[test]
+    fn grade_refuses_a_manifest_of_a_newer_artifact_contract_before_asking_anyone() {
+        let (dir, paths) = eval_workspace();
+        fs::write(
+            paths.artifact.join("manifest.json"),
+            r#"{"version": 1, "artifact_version": 2, "generated_at": "t", "sources": {}}"#,
+        )
+        .unwrap();
+        let trail_path = trail(dir.path());
+        with_llm_url(|| {
+            let transport = ScriptedTransport::new(vec![]);
+            let options = GradeOptions {
+                trail: trail_path,
+                model: Some("grader".to_string()),
+                ..GradeOptions::default()
+            };
+            let err = grade(&paths, &options, &transport).unwrap_err();
+            assert!(
+                matches!(
+                    &err,
+                    CommandError::Manifest(
+                        pinakes::manifest::ManifestError::ArtifactVersion { .. }
+                    )
+                ),
+                "{err}"
+            );
+            assert!(transport.requests.lock().unwrap().is_empty());
         });
     }
 

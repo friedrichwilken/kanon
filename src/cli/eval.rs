@@ -9,7 +9,7 @@ use kanon::backend::BackendSpec;
 use kanon::commands::{
     self, BackendEvalOptions, BackendFlags, EvalFlags, EvalOptions, EvalPlan, Paths,
 };
-use kanon::cost::{Budget, BudgetCheck};
+use kanon::cost::{Budget, BudgetCheck, BudgetKind};
 use kanon::eval::{self, GateMetric};
 
 use crate::cli::EXIT_GATE;
@@ -47,7 +47,8 @@ pub(crate) struct EvalArgs {
     negative_threshold: Option<f64>,
     /// Exit 2 when a backend's 95th percentile search latency exceeds this many milliseconds
     /// (default: `max_p95_ms` from the config). An absolute ceiling, not a comparison with a
-    /// baseline: set it with room to spare, latency varies from run to run.
+    /// baseline: set it with room to spare, latency varies from run to run. With fewer than 20
+    /// queries the 95th percentile is the slowest search, a cold first one included.
     #[arg(long, value_name = "MS", value_parser = parse_limit)]
     max_p95_ms: Option<f64>,
     /// Exit 2 when the mean tokens per query of a backend's top 5 hits exceeds this (default:
@@ -318,12 +319,26 @@ fn warn_unset_baseline(gate: &eval::Gate) {
 fn print_budget(backend: Option<&BackendSpec>, checks: &[BudgetCheck]) -> bool {
     let tag = backend.map_or_else(String::new, |backend| format!(" [{backend}]"));
     for check in checks {
-        let value = check
-            .value
-            .map_or_else(|| "n/a".to_string(), |value| format!("{value:.1}"));
+        let precision = match check.kind {
+            BudgetKind::P95Latency => 3,
+            BudgetKind::Tokens5 => 1,
+        };
+        let value = check.value.map_or_else(
+            || "n/a (no queries)".to_string(),
+            |value| format!("{value:.precision$}"),
+        );
+        // The ceiling as it was set, not rounded to the precision of the value.
         let verdict = if check.passed() { "ok" } else { "FAILED" };
+        let uncounted = if check.uncounted > 0 {
+            format!(
+                " ({} hits not counted: the value is an under-count)",
+                check.uncounted
+            )
+        } else {
+            String::new()
+        };
         eprintln!(
-            "budget{tag}: {} {value}, max {:.1}: {verdict}",
+            "budget{tag}: {} {value}, max {}: {verdict}{uncounted}",
             check.kind.label(),
             check.max
         );

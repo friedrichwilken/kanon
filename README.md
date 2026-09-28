@@ -127,20 +127,27 @@ table as a History section. Commit the directory and the numbers have a series.
 the median and 95th percentile time of a search, and the mean tokens per query of the units the
 top 5 and top 10 hits name (`tokens@5`, `tokens@10`). A retriever that doubles recall by
 returning whole sections may lose on both. Tokens are counted with the reference index's own
-tokeniser over the unit's text, so they are roughly words, not a model's tokens: they compare
-retrievers with each other and a corpus with itself over time, and are not a bill. Latency is the
+tokeniser over the unit's text: lower-cased words with the common stop words left out, and an
+identifier compound counted joined as well as split (`spec.sink` is `spec`, `sink` and
+`specsink`). They are not a model's tokens: they compare retrievers with each other and a corpus
+with itself over time, and are not a bill. Latency is the
 wall-clock time of the search call, so for `dense`, `hybrid` and `external` it includes the
 network round trip; it comes from one run and differs from the next, so read the series
 (`--out runs/`; `kanon history` shows `p95 ms` and `tokens@5` beside the quality columns, and
-`report` a Cost table before and after), not one number. A hit whose unit the artifact does not
-have, as when an `external` backend names other pages, counts no tokens and is reported as "not
-counted".
+`report` a Cost table before and after), not one number. With fewer than 20 queries the 95th
+percentile is simply the slowest search, a cold first one included. A hit whose unit cannot be
+identified counts no tokens and is reported as "not counted": the artifact does not have it (an
+`external` backend naming other pages), or the built-in backend named it by a page and a heading
+that several units of the page share (two `## FAQ` sections). The means are then under-counts,
+and a token budget checked against one says so.
 
 Two optional budgets gate the cost: `eval --max-p95-ms MS` and `--max-tokens N` (config
 `max_p95_ms` and `max_tokens`) exit 2 when a backend's 95th percentile latency, or its mean
-tokens@5, is over the ceiling. They are absolute ceilings, not comparisons with a baseline,
-because latency is too noisy to compare: set them with room to spare. They combine with
-`--gate`, which compares recall with a baseline, and a run fails if either does.
+tokens@5, is over the ceiling; a limit must be a finite number, zero or more. They are absolute
+ceilings, not comparisons with a baseline, because latency is too noisy to compare: set them with
+room to spare, and with a few dozen queries at least. They combine with `--gate`, which compares
+recall with a baseline, and a run fails if either does: exit 2 means "a gate failed", the
+`gate` and `budget` lines on stderr say which.
 
 `report --svg DIR` also writes the facts that decide a review as charts, linked from the
 report: recall, MRR and nDCG@5 over the runs (tuning solid, held-out dashed), the rank of each

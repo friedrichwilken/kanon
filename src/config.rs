@@ -194,6 +194,17 @@ pub enum ConfigError {
         /// The version found.
         version: u32,
     },
+    /// A cost limit (`max_p95_ms`, `max_tokens`) is not a finite number, zero or more: such a
+    /// ceiling would fail every run, or none.
+    #[error("{path}: {key} must be a finite number, zero or more, not {value}")]
+    Limit {
+        /// The config path.
+        path: PathBuf,
+        /// The key.
+        key: &'static str,
+        /// The value found.
+        value: f64,
+    },
     /// An entry under `backends:` is not usable: a bad name, a name that shadows a built-in
     /// kind, an unknown type, or keys that do not fit the type.
     #[error("{path}: backend {name:?}: {message}")]
@@ -388,6 +399,18 @@ pub fn parse_document(path: &Path, text: &str) -> Result<Document, ConfigError> 
             });
         }
         validate_backends(path, &config.backends)?;
+        for (key, value) in [
+            ("max_p95_ms", config.max_p95_ms),
+            ("max_tokens", config.max_tokens),
+        ] {
+            if let Some(value) = value.filter(|v| !v.is_finite() || *v < 0.0) {
+                return Err(ConfigError::Limit {
+                    path: path.to_path_buf(),
+                    key,
+                    value,
+                });
+            }
+        }
     }
     Ok(Document { config, priorities })
 }

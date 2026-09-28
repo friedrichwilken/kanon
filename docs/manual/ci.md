@@ -18,7 +18,10 @@ kanon report --eval-before $baseline --eval-after eval.json --runs $runs_dir
 The report goes to the job summary and, on a pull request, into one comment that is updated on
 every push (found again by its first line, `<!-- kanon-eval: NAME -->`). The job's exit code is
 `kanon eval`'s: **0** the gate passed, **2** the gated tuning metric (recall@5, or the config's
-`gate_metric`) dropped by more than `max_recall_drop`, **1** an error. A failed gate fails the
+`gate_metric`) dropped by more than `max_recall_drop`, or a cost budget (`max_p95_ms`,
+`max_tokens` in the config) was exceeded, **1** an error. The summary and the comment show the
+`gate` and `budget` lines, so the cause is visible; a failed run does not move the baseline.
+Latency varies between runners, so a `max_p95_ms` ceiling on a shared one wants room to spare. A failed gate fails the
 job after the summary and the
 comment are written, so the numbers are visible on the pull request either way.
 

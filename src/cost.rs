@@ -6,8 +6,10 @@
 //! into a [`Cost`], which a result carries as `cost`. A [`Budget`] turns it into an optional gate.
 //!
 //! Tokens are counted with the tokeniser the reference index uses ([`pinakes::index::tokenize`]),
-//! over a unit's text as `embed` embeds it: roughly words, not a model's tokens, so they compare
-//! retrievers with each other and a corpus with itself over time, and are not a bill.
+//! over a unit's text as `embed` embeds it: lower-cased words with the common stop words left
+//! out, and an identifier compound counted joined as well as split (`spec.sink` is `spec`, `sink`
+//! and `specsink`). That is not a model's tokens: the counts compare retrievers with each other
+//! and a corpus with itself over time, and are not a bill.
 //! Latency is the wall-clock time of the search call, so for `dense`, `hybrid` and `external` it
 //! includes the network round trip a caller would pay.
 
@@ -43,9 +45,11 @@ pub struct Tokens {
     /// Mean tokens of the units of the top 10 hits (all of them when fewer came back).
     #[serde(rename = "mean@10")]
     pub mean10: f64,
-    /// Hits whose unit could not be found in the artifact and so counted no tokens: an
-    /// `external` backend naming pages or headings the corpus does not have. Zero for the
-    /// built-in backends; when it is not, the means are under-counts.
+    /// Hits whose unit could not be identified and so counted no tokens: the artifact does not
+    /// have the unit (an `external` backend naming other pages), or the hit names its unit by a
+    /// page and a heading that several units of the page share (the built-in backends say no
+    /// more than that, so a page with two `## FAQ` sections is ambiguous). When it is not zero
+    /// the means are under-counts.
     #[serde(default)]
     pub unresolved: usize,
 }
@@ -66,8 +70,9 @@ impl Cost {
     pub fn render(&self) -> String {
         let mut parts = Vec::new();
         if let Some(latency) = &self.latency {
+            // Three decimals: a search of a small corpus takes a fraction of a millisecond.
             parts.push(format!(
-                "latency p50 {:.1} ms, p95 {:.1} ms",
+                "latency p50 {:.3} ms, p95 {:.3} ms",
                 latency.p50_ms, latency.p95_ms
             ));
         }
@@ -90,7 +95,8 @@ impl Cost {
 #[derive(Debug, Clone, Default)]
 pub struct UnitTokens {
     by_id: HashMap<String, u32>,
-    by_heading: HashMap<(String, String), u32>,
+    /// A page and heading name one unit, or `None` when several units of the page share them.
+    by_heading: HashMap<(String, String), Option<u32>>,
 }
 
 impl UnitTokens {
@@ -103,23 +109,27 @@ impl UnitTokens {
             units
                 .by_heading
                 .entry((unit.page_id.clone(), unit.heading))
-                .or_insert(tokens);
+                .and_modify(|found| *found = None)
+                .or_insert(Some(tokens));
             units.by_id.insert(unit.id, tokens);
         }
         units
     }
 
-    /// The tokens of the unit a hit names: by its `unit_id` when it carries one the artifact
-    /// knows, else the unit of its page under its heading. `None` when neither is found.
+    /// The tokens of the unit a hit names: the unit of its `unit_id` when it carries one, else
+    /// the unit of its page under its heading. `None` when the artifact has no such unit, and
+    /// when the page and heading fit several: guessing one would charge the hit for a unit it
+    /// may not have returned. A `unit_id` the artifact does not know is not second-guessed
+    /// through the heading either.
     pub fn count(&self, hit: &Hit) -> Option<u32> {
-        hit.unit_id
-            .as_deref()
-            .and_then(|id| self.by_id.get(id))
-            .or_else(|| {
-                self.by_heading
-                    .get(&(hit.page_id.clone(), hit.heading.clone()))
-            })
-            .copied()
+        match hit.unit_id.as_deref() {
+            Some(id) => self.by_id.get(id).copied(),
+            None => self
+                .by_heading
+                .get(&(hit.page_id.clone(), hit.heading.clone()))
+                .copied()
+                .flatten(),
+        }
     }
 }
 
@@ -251,6 +261,9 @@ pub struct BudgetCheck {
     pub value: Option<f64>,
     /// The ceiling.
     pub max: f64,
+    /// Hits the value could not count (see [`Tokens::unresolved`]): a token value is then an
+    /// under-count, which passing a ceiling does not answer for. Zero for latency.
+    pub uncounted: usize,
 }
 
 impl BudgetCheck {
@@ -274,6 +287,7 @@ impl Budget {
                 kind: BudgetKind::P95Latency,
                 value: cost.and_then(|c| c.latency).map(|l| l.p95_ms),
                 max,
+                uncounted: 0,
             });
         }
         if let Some(max) = self.tokens5 {
@@ -281,6 +295,7 @@ impl Budget {
                 kind: BudgetKind::Tokens5,
                 value: cost.and_then(|c| c.tokens).map(|t| t.mean5),
                 max,
+                uncounted: cost.and_then(|c| c.tokens).map_or(0, |t| t.unresolved),
             });
         }
         checks
@@ -358,15 +373,15 @@ mod tests {
             )),
             Some(expected[0])
         );
-        // An id the artifact does not know falls back to the heading; a page it does not know
-        // has no unit at all.
+        // An id the artifact does not know is not second-guessed through the heading, and a
+        // page it does not know has no unit at all.
         assert_eq!(
             units.count(&hit(
                 "handbook::docs/a.md",
                 "Caching",
                 Some("handbook::docs/a.md#9")
             )),
-            Some(expected[1])
+            None
         );
         assert_eq!(units.count(&hit("handbook::docs/zzz.md", "", None)), None);
         assert_eq!(
@@ -376,6 +391,74 @@ mod tests {
         assert!(
             expected[1] > expected[0],
             "the Caching section has more words than the intro"
+        );
+    }
+
+    #[test]
+    fn a_heading_that_several_units_of_a_page_share_is_ambiguous_not_the_first_of_them() {
+        let dir = tempfile::tempdir().unwrap();
+        write_artifact(
+            dir.path(),
+            &[SourceSpec {
+                name: "handbook",
+                repo: "example-org/handbook",
+                pages: &[(
+                    "docs/guide.md",
+                    "Guide",
+                    "# Guide\n\nIntro.\n\n## FAQ\n\nShort answer.\n\n## Other\n\nElsewhere.\n\n## FAQ\n\nThe long \
+                     answer has many more words than the first one did.\n",
+                )],
+                residue: &[],
+            }],
+        );
+        let mut pages = load_pages(dir.path(), &Priorities::default()).unwrap();
+        mark_mirrors(&mut pages);
+        let units = UnitTokens::of(&pages);
+        let by_page_and_heading =
+            |heading: &str| units.count(&hit("handbook::docs/guide.md", heading, None));
+        assert_eq!(by_page_and_heading("FAQ"), None, "two units are called FAQ");
+        assert!(
+            by_page_and_heading("Other").is_some(),
+            "one unit is called Other"
+        );
+        // The unit id still names either one exactly.
+        assert!(
+            units
+                .count(&hit(
+                    "handbook::docs/guide.md",
+                    "FAQ",
+                    Some("handbook::docs/guide.md#3")
+                ))
+                .is_some_and(|long| long
+                    > units
+                        .count(&hit(
+                            "handbook::docs/guide.md",
+                            "FAQ",
+                            Some("handbook::docs/guide.md#1")
+                        ))
+                        .unwrap())
+        );
+
+        // A meter counts such a hit as not counted, never as the wrong unit.
+        let mut meter = CostMeter::new(&units);
+        meter
+            .search(|| Ok::<_, ()>(vec![hit("handbook::docs/guide.md", "FAQ", None)]))
+            .unwrap();
+        let tokens = meter.finish().unwrap().tokens.unwrap();
+        assert_eq!(tokens.unresolved, 1);
+        assert!(tokens.mean5.abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn tokens_are_the_index_tokens_lower_cased_words_without_stop_words_and_compounds_joined() {
+        // What the README and the module docs say the count is.
+        assert_eq!(tokenize("The Spec of a Sink"), ["spec", "sink"]);
+        let compound = tokenize("spec.sink");
+        assert!(
+            ["spec", "sink", "specsink"]
+                .iter()
+                .all(|t| compound.iter().any(|c| c == t)),
+            "{compound:?}"
         );
     }
 
@@ -463,7 +546,7 @@ mod tests {
         assert_eq!(serde_json::from_str::<Cost>("{}").unwrap(), bare);
         assert_eq!(
             cost.render(),
-            "cost: latency p50 1.5 ms, p95 4.2 ms; tokens per query 40.0 @5, 75.5 @10"
+            "cost: latency p50 1.500 ms, p95 4.250 ms; tokens per query 40.0 @5, 75.5 @10"
         );
         let uncounted = Cost {
             tokens: Some(Tokens {
@@ -506,6 +589,17 @@ mod tests {
         assert_eq!(checks[0].kind, BudgetKind::P95Latency);
         assert!(!checks[1].passed());
         assert_eq!(checks[1].value, Some(300.0));
+
+        // A token value that could not count every hit says so; latency never does.
+        let partial = Cost {
+            tokens: Some(Tokens {
+                unresolved: 4,
+                ..cost.tokens.unwrap()
+            }),
+            ..cost
+        };
+        let checks = budget.check(Some(&partial));
+        assert_eq!((checks[0].uncounted, checks[1].uncounted), (0, 4));
 
         // No cost at all (a run with no queries): a limit that was asked for is not met.
         let checks = budget.check(None);

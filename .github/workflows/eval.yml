@@ -5,7 +5,8 @@
 # Exit codes of the job, the same as `kanon eval`'s:
 #   0  the gate passed (or there is no baseline yet: the first run only records one)
 #   2  the gate failed: the gated tuning metric (recall@5, or the config's `gate_metric`)
-#      dropped by more than `max_recall_drop`
+#      dropped by more than `max_recall_drop`, or a cost budget (`max_p95_ms`, `max_tokens`
+#      in the config) was exceeded
 #   1  an error (no artifact, a bad query file, the endpoint did not answer, ...)
 # A failed gate fails the job, but the summary and the comment are still written first.
 #
@@ -189,9 +190,9 @@ jobs:
               *) echo "# Retrieval gate: error (exit $CODE)" ;;
             esac
             echo
-            if grep -q '^gate' "$KANON_OUT/eval.log"; then
+            if grep -qE '^(gate|budget)' "$KANON_OUT/eval.log"; then
               echo '```text'
-              grep '^gate' "$KANON_OUT/eval.log"
+              grep -E '^(gate|budget)' "$KANON_OUT/eval.log"
               echo '```'
               echo
             fi
@@ -264,7 +265,7 @@ jobs:
             exit 0
           fi
           git commit -m "kanon: record run $(basename "$RUN_FILE" .json)" \
-            -m "$(grep '^gate' "$KANON_OUT/eval.log" || echo "no baseline: first run")"
+            -m "$(grep -E '^(gate|budget)' "$KANON_OUT/eval.log" || echo "no baseline: first run")"
           git push || (git pull --rebase && git push)
 
       - name: Fail on the gate
@@ -273,7 +274,7 @@ jobs:
           CODE: ${{ steps.eval.outputs.code }}
         run: |
           if [ "$CODE" = "2" ]; then
-            echo "::error::kanon gate failed: $(grep '^gate' "$KANON_OUT/eval.log" || true)"
+            echo "::error::kanon gate failed: $(grep -E '^(gate|budget)' "$KANON_OUT/eval.log" || true)"
           else
             echo "::error::kanon eval failed (exit $CODE)"
           fi

@@ -337,7 +337,7 @@ pub fn render_table(rows: &[HistoryRow]) -> String {
             metric(holdout, |m| m.ndcg5),
             metric(holdout, |m| m.ndcg10),
             n(holdout),
-            cost(row.p95_ms, 1),
+            cost(row.p95_ms, 3),
             cost(row.tokens5, 1),
             text(row.at.as_ref()),
         );
@@ -584,7 +584,7 @@ mod tests {
         assert!(
             table.contains(
                 "| 001 | first | bm25 | 0.800 | 0.850 | 0.660 | 0.640 | 0.680 | 40 \
-                 | 0.700 | 0.800 | 0.600 | 0.580 | 0.620 | 10 | 12.3 | 56.7 | abababab \
+                 | 0.700 | 0.800 | 0.600 | 0.580 | 0.620 | 10 | 12.340 | 56.7 | abababab \
                  | 2026-09-16T12:00:00Z |"
             ),
             "{table}"

@@ -114,8 +114,8 @@ fn cost_table(out: &mut String, before: Option<&Cost>, after: Option<&Cost>) {
         };
         format!(" {} → {} |", show(before), show(after))
     };
-    out.push_str(&cell(|c| c.latency.map(|l| l.p50_ms), 1));
-    out.push_str(&cell(|c| c.latency.map(|l| l.p95_ms), 1));
+    out.push_str(&cell(|c| c.latency.map(|l| l.p50_ms), 3));
+    out.push_str(&cell(|c| c.latency.map(|l| l.p95_ms), 3));
     out.push_str(&cell(|c| c.tokens.map(|t| t.mean5), 1));
     out.push_str(&cell(|c| c.tokens.map(|t| t.mean10), 1));
     out.push_str("\n\n");
@@ -301,7 +301,7 @@ mod tests {
         });
         assert!(text.contains("### Cost"), "{text}");
         assert!(
-            text.contains("| per query | – → 1.2 | – → 9.0 | – → 120.5 | – → 240.0 |"),
+            text.contains("| per query | – → 1.250 | – → 9.000 | – → 120.5 | – → 240.0 |"),
             "{text}"
         );
         // Both sides measured: before → after in each cell.
@@ -323,7 +323,9 @@ mod tests {
             ..ReportInput::default()
         });
         assert!(
-            text.contains("| per query | 2.0 → 1.2 | 4.0 → 9.0 | 60.0 → 120.5 | 90.0 → 240.0 |"),
+            text.contains(
+                "| per query | 2.000 → 1.250 | 4.000 → 9.000 | 60.0 → 120.5 | 90.0 → 240.0 |"
+            ),
             "{text}"
         );
     }

@@ -38,7 +38,7 @@ artifact contract version is checked on kanon's side; pages come from
 `pinakes::corpus::load_pages`. Never define a struct for `manifest.json` or `meta.json`, and
 never parse them by hand: a newer `artifact_version` would pass unnoticed. `cost` times every
 search of a run and counts the tokens of the units it returned (with the index's tokeniser),
-and holds the optional budget on either; it sits on pinakes and `hit` alone. Latency differs
+and holds the optional budget on either; it sits on pinakes, `hit` and `num`. Latency differs
 from run to run, so nothing may compare it exactly: a test that pins a result strips it with
 `EvalSummary::without_latency`.
 
@@ -57,7 +57,7 @@ only.
 ## Rules
 
 - Human output goes to stderr, data to stdout. Exit codes: 0 ok, 1 error, 2 a failed
-  `eval --gate`, 4 a failed `queries check`.
+  `eval --gate` or cost budget (`--max-p95-ms`, `--max-tokens`), 4 a failed `queries check`.
 - Errors are `thiserror` types in the library and `anyhow` at the CLI edge.
 - The golden tests pin behaviour rather than assert it. Refresh only when the change is
   intended, and say why in the commit body.

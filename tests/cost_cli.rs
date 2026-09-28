@@ -64,7 +64,6 @@ fn a_run_reports_its_latency_and_the_tokens_it_returned() {
     assert!(!cost_line.contains("not counted"), "{cost_line}");
 
     let cost = &json(&out)["cost"];
-    assert!(cost["latency"]["p50_ms"].as_f64().unwrap() >= 0.0);
     assert!(
         cost["latency"]["p95_ms"].as_f64().unwrap() >= cost["latency"]["p50_ms"].as_f64().unwrap()
     );
@@ -197,7 +196,7 @@ fn the_config_sets_the_budget_and_a_flag_overrides_it() {
             && err_text(&out).contains("max 0.5: FAILED")
     );
     assert!(
-        err_text(&out).contains("p95 latency (ms) ") && err_text(&out).contains("max 100000.0: ok")
+        err_text(&out).contains("p95 latency (ms) ") && err_text(&out).contains("max 100000: ok")
     );
     let out = run(&["--max-tokens", "100000"]);
     assert_eq!(out.status.code(), Some(0), "{}", err_text(&out));
@@ -271,4 +270,86 @@ fn a_baseline_written_before_cost_existed_still_gates() {
         "{}",
         err_text(&out)
     );
+}
+
+/// One page with two sections called `FAQ`: the second holds the words the query is about, and
+/// hundreds of others, so it is the unit that ranks and the one that is expensive.
+fn workspace_with_duplicate_headings() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let page = dir.path().join("artifact/handbook/docs/guide.md");
+    fs::create_dir_all(page.parent().unwrap()).unwrap();
+    let filler: Vec<String> = (0..300).map(|i| format!("filler{i}")).collect();
+    fs::write(
+        &page,
+        format!(
+            "# Guide\n\nIntro.\n\n## FAQ\n\nShort answer.\n\n## Other\n\nElsewhere.\n\n## FAQ\n\n\
+             quokka quokka {}\n",
+            filler.join(" ")
+        ),
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("queries.jsonl"),
+        "{\"id\": \"q\", \"kind\": \"howto\", \"query\": \"quokka\", \
+         \"expected\": [\"handbook/docs/guide.md\"]}\n",
+    )
+    .unwrap();
+    dir
+}
+
+#[test]
+fn a_hit_on_a_heading_two_units_share_is_not_charged_for_the_wrong_one() {
+    let dir = workspace_with_duplicate_headings();
+    let out = eval(dir.path(), &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", err_text(&out));
+    // The top hit is the page under `FAQ`, and the artifact cannot say which FAQ: it is not
+    // counted, and the run says so rather than charging the 4-token first section for it.
+    let tokens = &json(&out)["cost"]["tokens"];
+    assert_eq!(tokens["unresolved"], 1, "{tokens}");
+    assert!(
+        tokens["mean@5"].as_f64().unwrap().abs() < f64::EPSILON,
+        "{tokens}"
+    );
+    assert!(
+        err_text(&out).contains("(1 hits not counted)"),
+        "{}",
+        err_text(&out)
+    );
+
+    // A token ceiling checked against that under-count says it is one.
+    let out = eval(dir.path(), &["--max-tokens", "100"]);
+    assert_eq!(out.status.code(), Some(0), "{}", err_text(&out));
+    assert!(
+        err_text(&out).contains("(1 hits not counted: the value is an under-count)"),
+        "{}",
+        err_text(&out)
+    );
+}
+
+#[test]
+fn a_cost_limit_in_the_config_must_be_a_finite_number_zero_or_more() {
+    let dir = workspace();
+    for (yaml, key) in [
+        ("max_tokens: -1", "max_tokens"),
+        ("max_tokens: .nan", "max_tokens"),
+        ("max_p95_ms: .inf", "max_p95_ms"),
+    ] {
+        fs::write(
+            dir.path().join("kanon.yaml"),
+            format!("queries: queries.jsonl\n{yaml}\n"),
+        )
+        .unwrap();
+        let out = Command::new(env!("CARGO_BIN_EXE_kanon"))
+            .current_dir(dir.path())
+            .args(["--config", "kanon.yaml", "eval"])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1), "{yaml}: {}", err_text(&out));
+        let text = err_text(&out);
+        assert!(
+            text.contains(key) && text.contains("finite number, zero or more"),
+            "{yaml}: {text}"
+        );
+        assert!(out.stdout.is_empty(), "{yaml}: nothing was measured");
+    }
 }

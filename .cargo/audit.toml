@@ -1,7 +1,9 @@
 # Settings for `cargo audit` (the `audit` CI job and `just audit`).
 #
 # Every ignored advisory needs a reason and an exit condition here; remove the entry as soon
-# as the condition holds.
+# as the condition holds. Keep the ids in the list below, one quoted id per line:
+# scripts/check-audit-ignores.sh (run by `just audit` and the `audit` CI job) reads them from
+# there and fails when an entry is no longer reported, that is when its condition holds.
 
 [advisories]
 ignore = [
@@ -13,8 +15,11 @@ ignore = [
   # `Drop` cannot panic, and it only calls `get`, `put` and `peek_lru` on it, never `pop()`;
   # kanon does not use `lru` itself.
   # Exit condition: a tantivy release that requires lru >= 0.18.2 (tantivy's main, 0.27.0,
-  # already does; the latest release, 0.26.2, does not). When it is out, raise `tantivy` in
-  # Cargo.toml, run `cargo update -p tantivy` and delete this entry. pinakes ignores the same
-  # advisory for the same reason (its `.cargo/audit.toml`); take both together.
+  # already does; the latest release, 0.26.2, does not). pinakes pulls tantivy in through its
+  # own requirement and ignores the same advisory (its `.cargo/audit.toml`), so it moves first:
+  # once pinakes is on that tantivy, raise the `pinakes` rev and the `tantivy` requirement here,
+  # run `cargo update`, and confirm `cargo tree -i lru` shows lru >= 0.18.2 and Cargo.lock has
+  # one tantivy. Then delete this entry; until then `just audit` keeps passing, and afterwards
+  # it fails until the entry is gone.
   "RUSTSEC-2026-0253",
 ]

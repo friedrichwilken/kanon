@@ -122,11 +122,21 @@ higher one, and `kanon` passes pinakes's one line on unchanged, with the file it
 artifact/manifest.json: artifact version 2 is newer than this pinakes supports (1); upgrade pinakes
 ```
 
-That stops `eval`, `eval --backend`, `eval --compare` and `grade` when a source's `meta.json`
-is newer, and `eval --out` and `embed` when the artifact's `manifest.json` is (they are the
-commands that read it), in every case before a query or an embedding is made. An artifact
-whose `manifest.json` is not a manifest at all fails the same two commands with the loader's
-error rather than being hashed anyway.
+Every command that loads the artifact's pages (`eval` in all its forms, `grade`, `embed` and
+`queries suggest`) goes through `load_pages`, so a newer `meta.json` stops it. Each of them
+also reads the artifact's own `manifest.json` through `Manifest::load`, so a newer manifest
+stops it too, before any query, embedding or model call is made. `queries add`, `queries check`
+and `queries import` read the workspace's committed manifest through the same loader. An
+artifact whose `manifest.json` is present but not a manifest at all fails those commands with
+the loader's error rather than being measured or hashed anyway; an artifact with no manifest is
+measured as before.
+
+One limit is pinakes's, not kanon's. `Manifest::load` parses the typed manifest first and
+compares the version afterwards, so a manifest of a newer major that also removed or renamed a
+field kanon needs is reported as `invalid manifest: missing field ...` (a `version` other than
+1 as `unsupported manifest version`), not with the line above. `meta.json` has no such gap: its
+version is read before anything else. `kanon` cannot close this gap without parsing the file
+itself, which it does not do.
 
 A run file records the version it measured as `run.artifact_version`, next to
 `manifest_sha256`, so a series says which contract each number came from. It is absent when the

@@ -135,7 +135,7 @@ pub fn eval(paths: &Paths, options: &EvalOptions) -> Result<EvalOutcome, Command
     let rules = Rules::of(eval_config, options.gate_metric, options.negative_threshold);
     let priorities = settings.priorities;
     let queries = eval::load_queries(&queries_path)?;
-    let artifact_version = recorded_artifact_version(paths, options.out.as_deref())?;
+    let artifact_version = artifact::manifest_artifact_version(&paths.artifact)?;
     let pages = index::load_pages(&paths.artifact, &priorities)?;
 
     let (summary, page_count, searchable_count, delta) =
@@ -181,19 +181,6 @@ pub fn eval(paths: &Paths, options: &EvalOptions) -> Result<EvalOutcome, Command
         delta,
         run_file,
     })
-}
-
-/// The artifact contract version a run written to `out` records, read before any query runs
-/// so a manifest of a newer contract stops the run instead of being measured. `None` when
-/// nothing is written, or the artifact has no manifest.
-fn recorded_artifact_version(
-    paths: &Paths,
-    out: Option<&Path>,
-) -> Result<Option<u32>, CommandError> {
-    match out {
-        Some(_) => Ok(artifact::manifest_artifact_version(&paths.artifact)?),
-        None => Ok(None),
-    }
 }
 
 /// Write `summary` as the next run file in `dir`, with a [`RunInfo`] tying it to the artifact's
@@ -396,7 +383,7 @@ pub fn eval_backend(
     let rules = Rules::of(eval_config, options.gate_metric, options.negative_threshold);
     let priorities = settings.priorities;
     let queries = eval::load_queries(&queries_path)?;
-    let artifact_version = recorded_artifact_version(paths, options.out.as_deref())?;
+    let artifact_version = artifact::manifest_artifact_version(&paths.artifact)?;
     let adjusting = !options.with.is_empty() || !options.without.is_empty();
     if adjusting && options.backend.kind != BackendKind::Bm25 {
         return Err(BackendError::UnsupportedAdjustment(options.backend.name.clone()).into());

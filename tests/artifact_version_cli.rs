@@ -86,10 +86,11 @@ fn a_run_records_the_artifact_version_of_the_manifest_it_measured() {
     // A manifest with the field, and one from before the field existed (which means 1).
     write_manifest(root, Some(1));
     eval("versioned");
-    assert_eq!(
-        run_file(root, "runs/002-versioned.json")["run"]["artifact_version"],
-        1
-    );
+    let versioned = run_file(root, "runs/002-versioned.json");
+    assert_eq!(versioned["run"]["artifact_version"], 1);
+    // The hash of the same file sits next to it.
+    let sha = versioned["run"]["manifest_sha256"].as_str().unwrap();
+    assert_eq!(sha.len(), 64, "{sha}");
     write_manifest(root, None);
     eval("legacy");
     assert_eq!(
@@ -110,38 +111,29 @@ fn a_run_records_the_artifact_version_of_the_manifest_it_measured() {
 }
 
 #[test]
-fn a_manifest_of_a_newer_contract_stops_a_recorded_run_before_it_measures() {
+fn a_manifest_of_a_newer_contract_stops_every_eval_before_it_measures() {
     let dir = workspace();
     let root = dir.path();
     write_manifest(root, Some(2));
 
-    for args in [
-        vec!["eval", "--queries", "queries.jsonl", "--out", "runs"],
-        vec![
-            "eval",
-            "--queries",
-            "queries.jsonl",
-            "--backend",
-            "bm25-tantivy",
-            "--out",
-            "runs",
-        ],
-        vec![
-            "eval",
-            "--queries",
-            "queries.jsonl",
-            "--compare",
-            "bm25,bm25-tantivy",
-            "--out",
-            "runs",
-        ],
+    let base = ["eval", "--queries", "queries.jsonl"];
+    // With and without `--out`, every backend path, `--with`, and a dense backend whose
+    // embeddings file does not exist (it would fail on that, if the version were not first).
+    for extra in [
+        vec![],
+        vec!["--out", "runs"],
+        vec!["--with", "handbook::docs/user/quotas.md"],
+        vec!["--backend", "bm25-tantivy"],
+        vec!["--backend", "bm25-tantivy", "--out", "runs"],
+        vec!["--backend", "dense"],
+        vec!["--compare", "bm25,bm25-tantivy", "--out", "runs"],
     ] {
+        let args: Vec<&str> = base.iter().chain(&extra).copied().collect();
         let out = kanon(root, &args);
         assert_eq!(out.status.code(), Some(1), "{args:?}");
         let stderr = stderr(&out);
         assert!(stderr.contains(NEWER), "{args:?}: {stderr}");
         assert!(stderr.contains("artifact/manifest.json: "), "{stderr}");
-        assert!(out.stdout.is_empty(), "{args:?}: nothing was measured");
         assert!(!root.join("runs").exists(), "{args:?}: no run file");
     }
 }

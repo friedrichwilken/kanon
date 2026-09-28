@@ -5,8 +5,10 @@
 //! [`pinakes::corpus::load_pages`], which rejects a `meta.json` of a newer major, and the
 //! manifest from [`pinakes::manifest::Manifest::load`], which rejects the same in `manifest.json`.
 //! Both print the same one line (`artifact version 2 is newer than this pinakes supports (1);
-//! upgrade pinakes`), which `kanon` passes on unchanged. A consumer in another language pins
-//! pinakes's `docs/schemas/manifest.schema.json`.
+//! upgrade pinakes`), which `kanon` passes on unchanged. (`Manifest::load` parses the typed
+//! manifest before it compares the version, so a newer major that also dropped a field `kanon`
+//! needs is reported as an invalid manifest instead; that is pinakes's to fix, not parsed around
+//! here.) A consumer in another language pins pinakes's `docs/schemas/manifest.schema.json`.
 
 use std::path::Path;
 
